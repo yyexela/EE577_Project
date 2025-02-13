@@ -1,0 +1,11 @@
+submodules/MNIST
+**/__pycache__/**
+submodules/mypkg/Checkpoints
+submodules/mypkg/Datasets
+submodules/mypkg/Images
+submodules/mypkg/fft_images
+submodules/mypkg/fft_images_saved
+submodules/mypkg/Pickles
+submodules/mypkg/notebooks/data
+submodules/mypkg/Logs
+submodules/mypkg/mp4s_all

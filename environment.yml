@@ -1,0 +1,27 @@
+name: ee577
+channels:
+  - conda-forge
+  - anaconda
+  - dglteam
+  - nvidia
+  - pytorch
+dependencies:
+  - pytorch=2.5.1
+  - pytorch-cuda=11.8
+  - torchvision
+  - torchaudio
+  - numpy
+  - matplotlib
+  - pandas
+  - scikit-learn
+  - plotly
+  - notebook
+  - nb_conda_kernels
+  - nbformat
+  - ipympl
+  - ipykernel
+  - seaborn
+  - pip
+  - scikit-image
+  - opencv
+  - tqdm
