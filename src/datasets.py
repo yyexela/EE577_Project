@@ -4,13 +4,14 @@
 
 import torch
 import torch.nn as nn
+from torch.utils.data import Dataset
 import numpy as np
 import os
 from PIL import Image
 from typing import Any, Literal
 import torchvision.datasets as tvd
 import torchvision.transforms.v2 as v2
-import mypkg.src.global_config as global_config
+import src.global_config as global_config
 
 # Load config
 config = global_config.config
@@ -415,34 +416,6 @@ def load_mnist(dataset:Literal["MNIST", "FMNIST"], dataset_size:int = None, mnis
         X, Y = X[0:dataset_size], Y[0:dataset_size]
     return X, Y
 
-def ift(k, x, A=None, phi=None, normalize=True):
-    """
-    TODO
-    """
-    if phi is None: 
-        phi = torch.zeros(k.shape[0], dtype=k.dtype, device=k.device)
-    if A is None: 
-        A = torch.ones(k.shape[0], dtype=k.dtype, device=k.device)
-    if normalize: 
-        A = A/A.sum()
-    _2PI = np.pi * 2
-    return (torch.sin_(_2PI * k @ x.t() + phi[:, None]) * A[:, None]).sum(0)
-
-def binarize_dataset(X: torch.Tensor, Y: torch.Tensor, classes: list[int, int]) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Given a loaded dataset using a 2-class subset, convert the labels to be either -1 or 1.
-
-    `X`: Dataset samples  
-    `Y`: Dataset labels  
-    `classes`: Optional, list of two classes to keep in the dataset (ie. [3,5])  
-
-    Returns: Binarized dataset (`X`, `Y`)
-    """
-    if classes is not None:
-        Y[:, classes[0]] *= -1
-        Y = Y.sum(-1)
-    return X, Y
-
 def get_dataset(dataset: Literal['MNIST', 'FMNIST', 'YaleFaces', 'CelebA',  'CIFAR10', 'DTD', 'EuroSAT', 'FGVCAircraft', 'Omniglot', 'PCAM', 'SEMEION', 'STL10'], dataset_size: int = None, classes: list[int, int]= None, val: bool = False, val_split: float = False) -> tuple[torch.Tensor, torch.Tensor, torch.Size]: 
     """
     Get a dataset, binarize if necessary, add noise if necessary.
@@ -506,3 +479,19 @@ def get_dataset(dataset: Literal['MNIST', 'FMNIST', 'YaleFaces', 'CelebA',  'CIF
         X = X[start:]
         #Y = Y[start:]
     return X, None, shape
+
+#  defining dataset class
+class CustomCIFAR10(Dataset):
+    def __init__(self, data, transforms=None):
+        self.data = data
+        self.transforms = transforms
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        image = self.data[idx]
+
+        if self.transforms!=None:
+            image = self.transforms(image)
+        return image

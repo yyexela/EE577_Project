@@ -9,3 +9,5 @@ submodules/mypkg/Pickles
 submodules/mypkg/notebooks/data
 submodules/mypkg/Logs
 submodules/mypkg/mp4s_all
+*.tar.gz
+cifar-10-batches-py

@@ -7,8 +7,8 @@ import torch
 import seaborn as sns
 import numpy as np
 import matplotlib.pyplot as plt
-from mypkg.src import helpers
-import mypkg.src.global_config as global_config
+from src import helpers
+import src.global_config as global_config
 import plotly.express as px
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
@@ -20,7 +20,7 @@ config = global_config.config
 # Plotting functions # Plotting functions # Plotting functions #
 ################################################################
 
-def plot_line(x:tuple[np.ndarray,list[np.ndarray]], y:tuple[np.ndarray,list[np.ndarray]], label:tuple[str,list[str]], title:str, xaxis_title:str = None, yaxis_title:str = None) -> None:
+def plot_line(x:tuple[np.ndarray,list[np.ndarray]], y:tuple[np.ndarray,list[np.ndarray]], label:tuple[str,list[str]], title:str, xaxis_title:str = None, yaxis_title:str = None, fname:str = None, save:bool = False) -> None:
     """
     Plot one or multiple lines
 
@@ -47,7 +47,13 @@ def plot_line(x:tuple[np.ndarray,list[np.ndarray]], y:tuple[np.ndarray,list[np.n
     if yaxis_title is not None:
         fig.update_layout(yaxis_title=yaxis_title)
 
-    fig.show()
+    if save:
+        if fname is None:
+            raise Exception(f"Filename fname ({fname}) must not be None.")
+        fig.write_image(os.path.join(config.image_dir, f'{fname}.pdf'))
+    else:
+        fig.show()
+
     return None
 
 def plot_means_and_stdev(x:list[np.ndarray], means:list[np.ndarray], stdevs:list[np.ndarray], colors:list[tuple[int,int,int]]) -> None:
@@ -231,12 +237,12 @@ def plot_MNIST_AE_sigmas_zoom(MNIST_sigmas: np.ndarray, frames, plot_iters: list
     # Plot MNIST sigmas
     plt.figure()
     plt.title(f"MNIST Singular Values")
-    plt.plot(MNIST_sigmas, label="MNIST $\sigma_i$")
+    plt.plot(MNIST_sigmas, label="MNIST $\\sigma_i$")
 
     # Plot AE sigmas
     for iter in plot_iters:
         svd = torch.svd(torch.from_numpy(frames[iter].prediction))
-        plt.plot(svd[1], label=f"AE (iter {iter+1}) $\sigma_i$")
+        plt.plot(svd[1], label=f"AE (iter {iter+1}) $\\sigma_i$")
 
     # Adjust axes to zoom
     plt.ylim(int((min(MNIST_sigmas)-1)*0.1), int((max(MNIST_sigmas)+1)*0.1))
@@ -268,12 +274,12 @@ def plot_MNIST_AE_sigmas_full(MNIST_sigmas: np.ndarray, frames, plot_iters: list
     # Plot MNIST sigmas
     plt.figure()
     plt.title(f"MNIST Singular Values")
-    plt.plot(MNIST_sigmas, label="MNIST $\sigma_i$")
+    plt.plot(MNIST_sigmas, label="MNIST $\\sigma_i$")
 
     # Plot AE sigmas
     for iter in plot_iters:
         svd = torch.svd(torch.from_numpy(frames[iter].prediction))
-        plt.plot(svd[1], label=f"AE (iter {iter+1}) $\sigma_i$")
+        plt.plot(svd[1], label=f"AE (iter {iter+1}) $\\sigma_i$")
 
     # Adjust axes to fit MNIST sigmas
     plt.ylim(min(MNIST_sigmas)-1, max(MNIST_sigmas)+1)
