@@ -21,64 +21,76 @@ config = global_config.config
 
 #  defining encoder
 class Encoder(nn.Module):
-    def __init__(self, in_channels=3, out_channels=16, latent_dim=200, act_fn=nn.ReLU()):
+    def __init__(self, in_channels=3, out_channels=16, latent_dim=200, img_len=32, act_fn=nn.ReLU()):
         super().__init__()
 
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.img_len = img_len
+        self.out_img_len = 8 if in_channels == 3 else 27 # CIFAR10 or UPENN_GBM
+
         self.net = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, 3, padding=1), # (32, 32)
+            nn.Conv2d(in_channels, out_channels, self.in_channels, padding=1), # (32, 32)
             act_fn,
-            nn.Conv2d(out_channels, out_channels, 3, padding=1), 
+            nn.Conv2d(out_channels, out_channels, self.in_channels, padding=1), 
             act_fn,
-            nn.Conv2d(out_channels, 2*out_channels, 3, padding=1, stride=2), # (16, 16)
+            nn.Conv2d(out_channels, 2*out_channels, self.in_channels, padding=1, stride=2), # (16, 16)
             act_fn,
-            nn.Conv2d(2*out_channels, 2*out_channels, 3, padding=1),
+            nn.Conv2d(2*out_channels, 2*out_channels, self.in_channels, padding=1),
             act_fn,
-            nn.Conv2d(2*out_channels, 4*out_channels, 3, padding=1, stride=2), # (8, 8)
+            nn.Conv2d(2*out_channels, 4*out_channels, self.in_channels, padding=1, stride=2), # (8, 8)
             act_fn,
-            nn.Conv2d(4*out_channels, 4*out_channels, 3, padding=1),
+            nn.Conv2d(4*out_channels, 4*out_channels, self.in_channels, padding=1),
             act_fn,
             nn.Flatten(),
-            nn.Linear(4*out_channels*8*8, latent_dim),
+            nn.Linear(4*out_channels*int(self.out_img_len**2), latent_dim),
             act_fn
         )
 
+        print("Encoder:")
+        print(self.net)
+        print()
+
     def forward(self, x):
-        x = x.view(-1, 3, 32, 32)
-        output = self.net(x)
+        x = x.view(-1, self.in_channels, self.img_len, self.img_len)
+        output = self.net(x.float())
         return output
 
 
 #  defining decoder
 class Decoder(nn.Module):
-    def __init__(self, in_channels=3, out_channels=16, latent_dim=200, act_fn=nn.ReLU()):
+    def __init__(self, in_channels=3, out_channels=16, latent_dim=200, img_len=32, act_fn=nn.ReLU()):
         super().__init__()
 
+        self.in_channels = in_channels
         self.out_channels = out_channels
+        self.img_len = img_len
+        self.out_img_len = 8 if in_channels == 3 else 27 # CIFAR10 or UPENN_GBM
 
         self.linear = nn.Sequential(
-            nn.Linear(latent_dim, 4*out_channels*8*8),
+            nn.Linear(latent_dim, 4*out_channels*int(self.out_img_len**2)),
             act_fn
         )
 
         self.conv = nn.Sequential(
-            nn.ConvTranspose2d(4*out_channels, 4*out_channels, 3, padding=1), # (8, 8)
+            nn.ConvTranspose2d(4*out_channels, 4*out_channels, self.in_channels, padding=1), # (8, 8)
             act_fn,
-            nn.ConvTranspose2d(4*out_channels, 2*out_channels, 3, padding=1, 
+            nn.ConvTranspose2d(4*out_channels, 2*out_channels, self.in_channels, padding=1, 
                                 stride=2, output_padding=1), # (16, 16)
             act_fn,
-            nn.ConvTranspose2d(2*out_channels, 2*out_channels, 3, padding=1),
+            nn.ConvTranspose2d(2*out_channels, 2*out_channels, self.in_channels, padding=1),
             act_fn,
-            nn.ConvTranspose2d(2*out_channels, out_channels, 3, padding=1, 
+            nn.ConvTranspose2d(2*out_channels, out_channels, self.in_channels, padding=1, 
                                 stride=2, output_padding=1), # (32, 32)
             act_fn,
-            nn.ConvTranspose2d(out_channels, out_channels, 3, padding=1),
+            nn.ConvTranspose2d(out_channels, out_channels, self.in_channels, padding=1),
             act_fn,
-            nn.ConvTranspose2d(out_channels, in_channels, 3, padding=1)
+            nn.ConvTranspose2d(out_channels, in_channels, self.in_channels, padding=1)
         )
 
     def forward(self, x):
-        output = self.linear(x)
-        output = output.view(-1, 4*self.out_channels, 8, 8)
+        output = self.linear(x.float())
+        output = output.view(-1, 4*self.out_channels, self.out_img_len, self.out_img_len)
         output = self.conv(output)
         return output
 
@@ -98,9 +110,11 @@ class Autoencoder(nn.Module):
         return decoded
 
 class ConvolutionalAutoencoder():
-    def __init__(self, autoencoder):
+    def __init__(self, autoencoder, in_channels = 3, img_len = 32):
         self.network = autoencoder
         self.optimizer = torch.optim.Adam(self.network.parameters(), lr=1e-3)
+        self.in_channels = in_channels
+        self.img_len = img_len
 
     def train(self, loss_function, epochs, batch_size, 
             training_set, validation_set, test_set):
@@ -145,11 +159,11 @@ class ConvolutionalAutoencoder():
                 #  zeroing gradients
                 self.optimizer.zero_grad()
                 #  sending images to device
-                images = images.to(config.device)
+                images = images.to(config.device).float()
                 #  reconstructing images
                 output = self.network(images)
                 #  computing loss
-                loss = loss_function(output, images.view(-1, 3, 32, 32))
+                loss = loss_function(output, images.view(-1, self.in_channels, self.img_len, self.img_len))
                 #  calculating gradients
                 loss.backward()
                 #  optimizing weights
@@ -167,11 +181,11 @@ class ConvolutionalAutoencoder():
             for val_images in tqdm(val_loader):
                 with torch.no_grad():
                     #  sending validation images to device
-                    val_images = val_images.to(config.device)
+                    val_images = val_images.to(config.device).float()
                     #  reconstructing images
                     output = self.network(val_images)
                     #  computing validation loss
-                    val_loss = loss_function(output, val_images.view(-1, 3, 32, 32))
+                    val_loss = loss_function(output, val_images.view(-1, self.in_channels, self.img_len, self.img_len))
 
                 #--------------
                 # LOGGING
@@ -186,7 +200,7 @@ class ConvolutionalAutoencoder():
 
             for test_images in test_loader:
                 #  sending test images to device
-                test_images = test_images.to(config.device)
+                test_images = test_images.to(config.device).float()
                 with torch.no_grad():
                     #  reconstructing test images
                     reconstructed_imgs = self.network(test_images)
@@ -195,7 +209,7 @@ class ConvolutionalAutoencoder():
                 test_images = test_images.cpu()
 
                 #  visualisation
-                imgs = torch.stack([test_images.view(-1, 3, 32, 32), reconstructed_imgs], 
+                imgs = torch.stack([test_images.view(-1, self.in_channels, self.img_len, self.img_len), reconstructed_imgs], 
                                     dim=1).flatten(0,1)
                 grid = make_grid(imgs, nrow=10, normalize=True, padding=1)
                 grid = grid.permute(1, 2, 0)

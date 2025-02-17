@@ -5,6 +5,7 @@ channels:
   - dglteam
   - nvidia
   - pytorch
+  - simpleitk
 dependencies:
   - pytorch=2.5.1
   - pytorch-cuda=11.8
@@ -26,3 +27,7 @@ dependencies:
   - opencv
   - tqdm
   - python-kaleido
+  - torchmetrics
+  - tensorboard
+# pip install simpleitk
+# pip install elasticdeform

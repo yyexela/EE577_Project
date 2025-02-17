@@ -28,11 +28,11 @@ else:
     print('Running on the CPU')
 
 #  loading training data
-training_set = Datasets.CIFAR10(root='./', download=True,
+training_set = Datasets.CIFAR10(root=config.cifar10_dir, download=True,
                                 transform=transforms.ToTensor())
 
 #  loading validation data
-validation_set = Datasets.CIFAR10(root='./', download=True, train=False,
+validation_set = Datasets.CIFAR10(root=config.cifar10_dir, download=True, train=False,
                                   transform=transforms.ToTensor()) 
     
 #  extracting training images
@@ -57,15 +57,12 @@ test_data = datasets.CustomCIFAR10(test_images, transforms=transforms.Compose([t
 #  training model
 model = models.ConvolutionalAutoencoder(models.Autoencoder(models.Encoder(), models.Decoder()))
 
-log_dict = model.train(nn.MSELoss(), epochs=2, batch_size=64, 
+log_dict = model.train(nn.MSELoss(), epochs=10, batch_size=64, 
     training_set=training_data, validation_set=validation_data, test_set=test_data)
 
 train_loss = np.asarray(log_dict['training_loss_per_batch'])
 val_loss = np.asarray(log_dict['validation_loss_per_batch'])
 num_batches = train_loss.shape[0]
-
-print(train_loss.shape)
-print(np.arange(num_batches).shape)
 
 plot_data.plot_line(np.arange(num_batches), train_loss, "train loss", 'Training loss per batch', 'batch number', 'training loss', save=True, fname="train_loss")
 plot_data.plot_line(np.arange(num_batches), val_loss, "validation loss", 'validation loss per batch', 'batch number', 'validation loss', save=True, fname="val_loss")

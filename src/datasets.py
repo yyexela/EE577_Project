@@ -11,7 +11,11 @@ from PIL import Image
 from typing import Any, Literal
 import torchvision.datasets as tvd
 import torchvision.transforms.v2 as v2
+from torch.utils.data import DataLoader
 import src.global_config as global_config
+import src.data_prep as dp
+from src.dataset_class import DatasetGenerator
+import src.helpers as helpers
 
 # Load config
 config = global_config.config
@@ -19,6 +23,22 @@ config = global_config.config
 #######################################################
 # Models # Models # Models # Models # Models # Models #
 #######################################################
+
+def load_upenn_2d_struct(gen_params):
+    """
+    Load UPENN dataset 2d structs ('T2', 'FLAIR', 'T1', 'T1GD')
+    """
+    patients = dp.retrieve_patients()
+
+    X_train, y_train, X_test, y_test = dp.split_image_v2(patients, seed=config.seed)
+
+    train_data = DatasetGenerator(X_train, y_train, **gen_params)
+    train_dataloader = DataLoader(train_data, batch_size=gen_params['batch_sz'], shuffle=True, pin_memory=True)
+
+    test_data = DatasetGenerator(X_test, y_test, **gen_params)
+    test_dataloader = DataLoader(test_data, batch_size=1, shuffle=True, pin_memory=True)
+
+    return train_dataloader, test_dataloader
 
 def load_stl10(dataset_size:int = None, classes:list[int, int] = None) -> tuple[torch.Tensor, torch.Tensor]:
     """

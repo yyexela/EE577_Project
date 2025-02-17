@@ -25,6 +25,22 @@ config = global_config.config
 # Generic Functions # Generic Functions #
 #########################################
 
+def extract_images(dataloader, modality_id):
+    images = None
+    for _, (X, _) in enumerate(dataloader):
+        if images is None:
+            images = X[:,modality_id,0,:,:]
+        else:
+            images = torch.cat((images,X[:,modality_id,0,:,:]),dim=0)
+    images = images.unsqueeze(1)
+    return images
+
+modalities = {
+    'struct': ['T2', 'FLAIR', 'T1', 'T1GD'],
+    'DTI':  ['DTI_AD', 'DTI_FA', 'DTI_RD', 'DTI_TR'],
+    'DSC':['DSC_ap-rCBV', 'DSC_PH', 'DSC_PSR'],
+}
+
 def min_max_fit(A: np.ndarray, a:float=0., b:float=1.) -> np.ndarray:
     """
     Scale the array A to have values in the range [min,max] globally

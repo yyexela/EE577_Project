@@ -60,7 +60,14 @@ class Config(Namespace):
         self.pickle_dir = os.path.join(self.top_dir, "Pickles")
         self.image_dir = os.path.join(self.top_dir, "Images")
 
-        self.yalefaces_dir = os.path.join(self.dataset_dir, "yalefaces")
+        self.cifar10_dir = os.path.join(self.dataset_dir, "CIFAR10")
+        self.upenn_dir = os.path.join(self.dataset_dir, "UPENN_GBM")
+
+        self.upenn_csv_dir = os.path.join(self.upenn_dir, 'csvs')
+        self.upenn_image_dir = os.path.join(self.upenn_dir, 'PKG-UPENN-GBM-NIfTI', 'UPENN-GBM', 'NIfTI-files')
+        self.classifier = 'Survival_from_surgery_days_UPDATED'
+
+        self.seed = 42
 
         # Create those directories
         for newpath in [self.dataset_dir, self.checkpoint_dir, self.pickle_dir, self.image_dir]:

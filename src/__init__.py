@@ -1,4 +1,4 @@
-__all__ = ['helpers', 'global_config', 'plot_data', 'models', 'datasets']
+__all__ = ['helpers', 'global_config', 'plot_data', 'models', 'datasets', 'data_prep', 'dataset_class']
 
 import sys
 from pathlib import Path
