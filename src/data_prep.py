@@ -10,8 +10,10 @@ from torch.utils.data import Dataset
 import numpy as np
 import pandas as pd
 import os
+from tqdm import tqdm
 from PIL import Image
 import SimpleITK as sitk
+import src.helpers as helpers
 from typing import Any, Literal
 import torchvision.datasets as tvd
 from collections import OrderedDict
@@ -281,6 +283,7 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
                     selected_structural_paths[pat][mod] = p
 
     paths_df = pd.DataFrame(patient_df)
+    paths_df.sort_index(inplace=True)
     paths_df['autosegm_image_paths'] = paths_df.index.map(selected_autosegm_paths)
     paths_df['mansegm_image_paths'] = paths_df.index.map(selected_mansegm_paths)
     paths_df['structural_image_paths'] = paths_df.index.map(selected_structural_paths.get)
@@ -291,11 +294,14 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
     rng_rotate = np.random.default_rng(42)
     success_flag = True
     failed_pats = []
-    for pat, row in paths_df.iterrows():
+    tumor_boxes = []
+    pat = None
+    pbar = tqdm(paths_df.iterrows(), total=paths_df.shape[0])
+    for pat, row in pbar:
+        pbar.set_description(f"Processing patient {pat}")
         mod_arr = OrderedDict()
-        for aug in augments:
-            for mod in modality:
-                print(f"Running! pat: {pat}")
+        for aug_idx, aug in enumerate(augments):
+            for mod_idx, mod in enumerate(modality):
                 success_flag = True
                 if image_type == 'autosegm':
                     mask = sitk.GetArrayFromImage(sitk.ReadImage(row['autosegm_image_paths']))
@@ -314,6 +320,19 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
                     print()
                     success_flag = False
                     continue
+
+                if aug_idx + mod_idx == 0:
+                    flipped_mask = np.flip(np.flip(np.flip(mask,0),1),2)
+
+                    tumor_box = ([int(np.min(helpers.first_nonzero(mask, 0, np.inf))),
+                                mask.shape[0]-int(np.min(helpers.first_nonzero(flipped_mask, 0, np.inf)))],
+                                [int(np.min(helpers.first_nonzero(mask, 1, np.inf))),
+                                mask.shape[1]-int(np.min(helpers.first_nonzero(flipped_mask, 1, np.inf)))],
+                                [int(np.min(helpers.first_nonzero(mask, 2, np.inf))),mask.shape[2]-int(np.min(helpers.first_nonzero(flipped_mask, 2, np.inf)))])
+
+                    pbar.set_description(f"Processing patient {pat}, tumor box: {tumor_box}")
+
+                    tumor_boxes.append(tumor_box)
 
                 full_arr = np.where(mask>0, struct, 0)
                 #full_arr = np.where(np.logical_and(mask>0, mask!=2), struct, 0)
@@ -396,5 +415,13 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
 
     print(f"Failed patients for {modality}:")
     print(list(set(failed_pats)))
+
+    print()
+    print(f"Tumor box data:")
+    flattened_data = [np.array(tuple).flatten() for tuple in tumor_boxes]
+    df = pd.DataFrame(flattened_data)
+    df.columns = ["X min", "X max", "Y min", "Y max", "Z min", "Z max"]
+    df.index = list(paths_df.index)[0:df.shape[0]]
+    print(df.describe())
 
     return paths_df

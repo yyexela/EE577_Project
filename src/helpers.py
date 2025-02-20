@@ -24,6 +24,15 @@ config = global_config.config
 #########################################
 # Generic Functions # Generic Functions #
 #########################################
+def first_nonzero(arr, axis, invalid_val=-1):
+    """
+    Copied from:
+
+    https://stackoverflow.com/questions/47269390/how-to-find-first-non-zero-value-in-every-column-of-a-numpy-array
+    """
+    mask = arr!=0
+    return np.where(mask.any(axis=axis), mask.argmax(axis=axis), invalid_val)
+
 
 def extract_images(dataloader, modality_id):
     images = None
