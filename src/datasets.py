@@ -20,9 +20,9 @@ import src.helpers as helpers
 # Load config
 config = global_config.config
 
-#######################################################
-# Models # Models # Models # Models # Models # Models #
-#######################################################
+#############################################################
+# Functions # Functions # Functions # Functions # Functions #
+#############################################################
 
 def load_upenn_2d_struct(gen_params):
     """

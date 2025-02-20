@@ -65,6 +65,7 @@ class Config(Namespace):
 
         self.upenn_csv_dir = os.path.join(self.upenn_dir, 'csvs')
         self.upenn_image_dir = os.path.join(self.upenn_dir, 'PKG-UPENN-GBM-NIfTI', 'UPENN-GBM', 'NIfTI-files')
+        self.upenn_out_dir = os.path.join(self.upenn_dir, 'numpy_conversion_struct_channels')
         self.classifier = 'Survival_from_surgery_days_UPDATED'
 
         self.seed = 42

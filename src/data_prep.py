@@ -1,4 +1,4 @@
-# Disclaimer: code copied from https://github.com/LabAIRT/SpotTune_MGMT_prediction
+# Disclaimer: code copied and modified from https://github.com/LabAIRT/SpotTune_MGMT_prediction
 
 ###############################
 # Imports # Imports # Imports #
@@ -11,12 +11,16 @@ import numpy as np
 import pandas as pd
 import os
 from PIL import Image
+import SimpleITK as sitk
 from typing import Any, Literal
 import torchvision.datasets as tvd
 from collections import OrderedDict
 import torchvision.transforms.v2 as v2
 import src.global_config as global_config
 from sklearn.model_selection import train_test_split
+from skimage.transform import rescale
+from skimage.util import random_noise
+from skimage.transform import rotate
 
 # Load config
 config = global_config.config
@@ -222,3 +226,175 @@ def retrieve_patients():
     patients = patients.drop(idx_to_remove)
 
     return patients
+
+def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='autosegm', window=(140, 172, 164), pad_window=(86, 86, 86), base_dim=(155,240,240), downsample=False, window_idx = ((0, 140), (39, 211), (44,208)), down_factor=0.5, augments=('base', 'flip', 'rotate', 'noise', 'deform')):
+    """
+    Based on a provided directory, retrieve images and save them as npy files to be used by a data generator
+
+    Alexey notes:
+    - Creates the numpy files used in training
+    - Note that the paper, "Adaptive fine-tuning based transfer learning for the identification of MGMT promoter methylation status" explains the data processing methodology
+    """
+    patient_df = retrieve_patients()
+    image_dir_ = config.upenn_image_dir
+    out_dir = config.upenn_out_dir
+
+    if not os.path.isdir(out_dir):
+        os.makedirs(out_dir)
+        print('making ', out_dir)
+    patients = patient_df.index.tolist()
+    autosegm_dir = os.path.join(image_dir_, 'automated_segm')
+    mansegm_dir = os.path.join(image_dir_, 'images_segm')
+
+    structural_dir = []
+    structural_dir.append(os.path.join(image_dir_, 'images_structural'))
+
+    autosegm_paths = [os.path.join(r, d, f1) if len(d)>0 else os.path.join(r, f1) for r, d, f in os.walk(autosegm_dir) for f1 in f]
+    mansegm_paths = [os.path.join(r, d, f1) if len(d)>0 else os.path.join(r, f1) for r, d, f in os.walk(mansegm_dir) for f1 in f]
+
+    structural_paths = []
+    for path in structural_dir:
+        for r, d, f in os.walk(path):
+            for f1 in f:
+                if d == ['old']:
+                    continue
+                elif len(d)>0:
+                    structural_paths.append(os.path.join(r,d,f1))
+                else:
+                    structural_paths.append(os.path.join(r, f1))
+
+    selected_autosegm_paths = {'_'.join(p.split('/')[-1].split('.')[0].split('_')[:2]): p for p in autosegm_paths if '_'.join(p.split('/')[-1].split('.')[0].split('_')[:2]) in patients}
+    selected_mansegm_paths = {'_'.join(p.split('/')[-1].split('.')[0].split('_')[:2]): p for p in mansegm_paths if '_'.join(p.split('/')[-1].split('.')[0].split('_')[:2]) in patients}
+
+    selected_structural_paths = {}
+
+    for p in structural_paths:
+        pat = '_'.join(p.split('/')[-1].split('.')[0].split('_')[:2])
+        if pat in patients:
+            selected_structural_paths[pat] = {}
+
+    for p in structural_paths:
+        pat = '_'.join(p.split('/')[-1].split('.')[0].split('_')[:2])
+        if pat in patients:
+            for mod in modality:
+                if f"{mod}." in p:
+                    selected_structural_paths[pat][mod] = p
+
+    paths_df = pd.DataFrame(patient_df)
+    paths_df['autosegm_image_paths'] = paths_df.index.map(selected_autosegm_paths)
+    paths_df['mansegm_image_paths'] = paths_df.index.map(selected_mansegm_paths)
+    paths_df['structural_image_paths'] = paths_df.index.map(selected_structural_paths.get)
+
+    window = tuple(int(i * down_factor) for i in window)
+
+    rng_noise = np.random.default_rng(42)
+    rng_rotate = np.random.default_rng(42)
+    success_flag = True
+    failed_pats = []
+    for pat, row in paths_df.iterrows():
+        mod_arr = OrderedDict()
+        for aug in augments:
+            for mod in modality:
+                print(f"Running! pat: {pat}")
+                success_flag = True
+                if image_type == 'autosegm':
+                    mask = sitk.GetArrayFromImage(sitk.ReadImage(row['autosegm_image_paths']))
+                elif image_type == 'mansegm' and np.logical_not(row['mansegm_image_paths'] != row['mansegm_image_paths']):
+                    mask = sitk.GetArrayFromImage(sitk.ReadImage(row['mansegm_image_paths']))
+                else:
+                    mask = sitk.GetArrayFromImage(sitk.ReadImage(row['autosegm_image_paths']))
+                try:
+                    struct = sitk.GetArrayFromImage(sitk.ReadImage(row['structural_image_paths'][mod]))
+                except:
+                    print(f"ERROR in patient {pat}, augmentation {aug}, and mod {mod}")
+                    print("row:")
+                    print(row)
+                    print("skipping...")
+                    failed_pats.append(pat)
+                    print()
+                    success_flag = False
+                    continue
+
+                full_arr = np.where(mask>0, struct, 0)
+                #full_arr = np.where(np.logical_and(mask>0, mask!=2), struct, 0)
+
+                # Starts with dim 155x240x240 and selects box with dim 140x172x164, then downsample by a factor of 2
+                full_arr = full_arr[window_idx[0][0]:window_idx[0][1], window_idx[1][0]:window_idx[1][1], window_idx[2][0]:window_idx[2][1]]
+                struct = struct[window_idx[0][0]:window_idx[0][1], window_idx[1][0]:window_idx[1][1], window_idx[2][0]:window_idx[2][1]]
+
+                full_arr = rescale(full_arr, down_factor)
+                struct = rescale(struct, down_factor)
+
+                #winsorize(full_arr, limits=(0.0,0.01), inplace=True)
+                #winsorize(struct, limits=(0.0,0.01), inplace=True)
+
+                full_min = np.min(full_arr)
+                full_max = np.max(full_arr)
+                struct_min = np.min(struct)
+                struct_max = np.max(struct)
+                # scale by the maximum of each image rather than the feature maximum
+                full_arr = (full_arr - full_min) / (full_max - full_min)
+                struct = (struct - struct_min) / (struct_max - struct_min)
+
+
+                full_shape = np.shape(full_arr)
+                if full_shape != pad_window:
+
+                    difference_axis_0 = abs(full_shape[0]-pad_window[0])
+                    difference_axis_1 = abs(full_shape[1]-pad_window[1])
+                    difference_axis_2 = abs(full_shape[2]-pad_window[2])
+
+                    split_axis_0 = difference_axis_0 // 2
+                    rem_axis_0 = difference_axis_0 % 2
+                    split_axis_1 = difference_axis_1 // 2
+                    rem_axis_1 = difference_axis_1 % 2
+                    split_axis_2 = difference_axis_2 // 2
+                    rem_axis_2 = difference_axis_2 % 2
+
+                    full_arr = np.pad(full_arr, pad_width=((split_axis_0, split_axis_0+rem_axis_0), 
+                                                       (split_axis_1, split_axis_1+rem_axis_1),
+                                                       (split_axis_2, split_axis_2+rem_axis_2)),
+                                                       mode='constant', constant_values=0)
+                    struct = np.pad(struct, pad_width=((split_axis_0, split_axis_0+rem_axis_0), 
+                                                       (split_axis_1, split_axis_1+rem_axis_1),
+                                                       (split_axis_2, split_axis_2+rem_axis_2)),
+                                                       mode='constant', constant_values=0)
+                    #if full_shape[0] < 64:
+                    #    difference = 64 - full_shape[0]
+                    #    ed_arr = np.concatenate((ed_arr, np.zeros((difference, full_shape[1], full_shape[2]))), axis=0)
+                    #    et_arr = np.concatenate((et_arr, np.zeros((difference, full_shape[1], full_shape[2]))), axis=0)
+                    #    nc_arr = np.concatenate((nc_arr, np.zeros((difference, full_shape[1], full_shape[2]))), axis=0)
+                    #    full_arr = np.concatenate((full_arr, np.zeros((difference, full_shape[1], full_shape[2]))), axis=0)
+
+                mod_arr[mod] = full_arr
+            
+            if success_flag:
+                arr = np.array([mod_arr[mod] for mod in modality])
+                if 'noise' in aug:
+                    arr = random_noise(arr, mode='gaussian', seed=rng_noise)
+                if 'rotation' in aug:
+                    angle = rng_rotate.integers(-180, high=180)
+                    for i in range(len(arr)):
+                        arr[i,:,:,:] = rotate(arr[i,:,:,:], angle, preserve_range=True)
+                if 'flip' in aug:
+                    arr = np.flip(arr, axis=(1,2,3)).copy()
+                if 'deform' in aug:
+                    #arr = elasticdeform.deform_random_grid(arr, sigma=5, order=0, axis=(1,2,3))
+                    raise Exception("Not using elasticdeform anymore")
+
+                if 'base' in aug:
+                    np.save(os.path.join(out_dir, f"{pat}_mods.npy"), np.array([mod_arr[mod] for mod in modality]))
+                else:
+                    np.save(os.path.join(out_dir, f"{pat}_{aug}_mods.npy"), arr)
+                #np.save(os.path.join(out_dir, pat+'_'+modality+'.npy'), et_arr)
+                #np.save(os.path.join(out_dir, pat+'_'+modality+'.npy'), nc_arr)
+                #np.save(os.path.join(out_dir, pat+'_'+modality+'.npy'), full_arr)
+
+        if success_flag:
+            del mask
+            del struct
+
+    print(f"Failed patients for {modality}:")
+    print(list(set(failed_pats)))
+
+    return paths_df
