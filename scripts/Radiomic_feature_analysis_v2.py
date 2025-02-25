@@ -20,7 +20,11 @@ import matplotlib.pyplot as plt
 
 pkg_path = str(Path(os.path.abspath('')).parent.absolute())
 sys.path.insert(0, pkg_path)
-data_path=pkg_path+'/Datasets/UPENN_GBM/csvs/'
+# print(pkg_path)
+data_path=pkg_path+'/project/Datasets/UPENN_GBM/'
+csv_path=data_path+'csvs/'
+model_label='Random_Forest'
+# model_label='Linear_Model'
 
 data_availability = pd.read_csv(os.path.join(data_path, 'UPENN-GBM_data_availability.csv'))
 data_availability = data_availability[data_availability['Overall Survival'] != 'not available']
@@ -84,11 +88,11 @@ def train_linear_model(model, X_train, y_train, epochs=40, batch_size=32):
     return history
 
 def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5], Random_Forest=False):
-    df = pd.read_csv(os.path.join(data_path, file_path))
+    df = pd.read_csv(os.path.join(csv_path, file_path))
     df = df[df['SubjectID'].isin(patient_ids)]
     df = df.set_index('SubjectID')
     df = drop_correlated_features(df)
-
+    df = df.dropna()
     results = {'mse': [], 'r2': []}
     
     best_model = None
@@ -103,11 +107,11 @@ def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5], Random_Fore
         if Random_Forest:
             model = get_RF_regressor(random_state=seed)
             history = train_RF_model(model, X_train, y_train)
-            model_label = 'Random Forest'
+            model_label = 'Random_Forest'
         else:
             model = get_linear_model(X_train.shape)
             history = train_linear_model(model, X_train, y_train)
-            model_label = 'Linear Model'
+            model_label = 'Linear_Model'
 
         # Makes predictions
         y_pred = model.predict(X_test)
@@ -159,7 +163,7 @@ def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5], Random_Fore
 
 
 # Loops through all files starting with 'Radiomic_Features_CaPTk'
-file_names = [f for f in os.listdir(data_path) if f.startswith('Radiomic_Features_CaPTk')]
+file_names = [f for f in os.listdir(csv_path) if f.startswith('Radiomic_Features_CaPTk')]
 
 # Results
 all_results = []
@@ -178,7 +182,10 @@ for file_name in file_names:
     existing_result = any(file_name in str(result) for result in all_results)
     
     if not existing_result:  # Only process if result doesn't exist
-        result = run_experiment_for_file(file_name)
+        if model_label=="Random_Forest":
+            result=run_experiment_for_file(file_name, Random_Forest=True)
+        else:
+            result = run_experiment_for_file(file_name)
         all_results.append(result)
         
         # Save progress after each iteration
