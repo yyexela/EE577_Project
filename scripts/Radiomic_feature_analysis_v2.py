@@ -9,6 +9,9 @@ from sklearn.preprocessing import StandardScaler
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint,ReduceLROnPlateau
 import tensorflow as tf
 from tensorflow.keras import layers, models,regularizers
+import joblib 
+
+from sklearn.ensemble import RandomForestRegressor
 
 from pathlib import Path
 from sklearn.metrics import r2_score, mean_squared_error
@@ -39,12 +42,12 @@ def drop_correlated_features(df, threshold=0.9):
     df = df.drop(columns=to_drop)
     return df
 
-def train_transform(radiomeric_features, survival_days):
+def train_transform(radiomeric_features, survival_days, seed=42):
     X = radiomeric_features
     Y = survival_days
     X, Y = X.align(Y, join='inner', axis=0)
     Y= Y.astype(int) 
-    X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.2, random_state=seed)
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
     X_test = scaler.transform(X_test)
@@ -62,7 +65,15 @@ def get_linear_model(X_train_shape, drop_rate = 0.3, regularizer=tf.keras.regula
     model.compile(optimizer='adam', loss='mean_squared_error', metrics=['mae'])
     return model
 
-def train_the_model(model, X_train, y_train, epochs=40, batch_size=32):
+def get_RF_regressor(n_estimators=40, max_depth=10, random_state=42):
+    model = RandomForestRegressor(n_estimators=n_estimators, random_state=random_state, max_depth=max_depth)
+    return model
+
+def train_RF_model(model, X_train, y_train):
+    model.fit(X_train, y_train)
+    return model
+
+def train_linear_model(model, X_train, y_train, epochs=40, batch_size=32):
     history = model.fit(
     X_train, y_train,  
     epochs=epochs,                 
@@ -72,7 +83,7 @@ def train_the_model(model, X_train, y_train, epochs=40, batch_size=32):
     )
     return history
 
-def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5]):
+def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5], Random_Forest=False):
     df = pd.read_csv(os.path.join(data_path, file_path))
     df = df[df['SubjectID'].isin(patient_ids)]
     df = df.set_index('SubjectID')
@@ -80,14 +91,23 @@ def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5]):
 
     results = {'mse': [], 'r2': []}
     
+    best_model = None
+    best_r2 = -float('inf')  # Initialize to a very low value, since R2 can never be lower than -inf
+    best_model_label = None
+
     for seed in random_seeds:
         # Split data and train model
-        X_train, X_test, y_train, y_test = train_transform(df, survival_days)
-        model = get_linear_model(X_train.shape)
-
-        # Train the model with the current random seed
         tf.random.set_seed(seed)
-        history = train_the_model(model, X_train, y_train)
+        X_train, X_test, y_train, y_test = train_transform(df, survival_days, seed)
+        global model_label
+        if Random_Forest:
+            model = get_RF_regressor(random_state=seed)
+            history = train_RF_model(model, X_train, y_train)
+            model_label = 'Random Forest'
+        else:
+            model = get_linear_model(X_train.shape)
+            history = train_linear_model(model, X_train, y_train)
+            model_label = 'Linear Model'
 
         # Makes predictions
         y_pred = model.predict(X_test)
@@ -101,12 +121,30 @@ def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5]):
         results['r2'].append(r2)
         print(f"For file {file_path} and Seed {seed}- MSE: {mse}, R2: {r2}")
 
+        # Track the best model based on R2 score
+        if r2 > best_r2:
+            best_r2 = r2
+            best_model = model  # Save the best model
+            best_model_label = model_label  # Save model label for logging
+
     # Calculates average and std dev for MSE and R2
     mse_avg = np.mean(results['mse'])
     mse_std = np.std(results['mse'])
     r2_avg = np.mean(results['r2'])
     r2_std = np.std(results['r2'])
 
+    # Save the best model to a file
+    if best_model_label == 'Random Forest':
+        # Save Random Forest model using joblib
+        model_filename = f"best_rf_model_for_{file_path}.pkl"
+        joblib.dump(best_model, model_filename)
+    else:
+        # Save Keras model (Linear model or other types) using model.save() if it's a Keras model
+        model_filename = f"best_linear_model_for_{file_path}.h5"
+        best_model.save(model_filename)
+
+    print(f"Best Model (R2: {best_r2}) saved as {model_filename}")
+    
     return {
         'file_name': file_path,
         'mse_avg': mse_avg,
@@ -114,7 +152,9 @@ def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5]):
         'r2_avg': r2_avg,
         'r2_std': r2_std,
         'mse': results['mse'],
-        'r2': results['r2']
+        'r2': results['r2'],
+        'best_model_filename': model_filename,  # Include the best model filename for reference
+        'best_r2': best_r2
     }
 
 
@@ -125,7 +165,7 @@ file_names = [f for f in os.listdir(data_path) if f.startswith('Radiomic_Feature
 all_results = []
 
 # Check if the results file already exists
-results_file = 'model_results_summary.csv'
+results_file = f'model_results_summary_for_{model_label}.csv'
 
 # Load existing results if the file exists
 if os.path.exists(results_file):
