@@ -94,10 +94,6 @@ def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5], Random_Fore
     df = drop_correlated_features(df)
     df = df.dropna()
     results = {'mse': [], 'r2': []}
-    
-    best_model = None
-    best_r2 = -float('inf')  # Initialize to a very low value, since R2 can never be lower than -inf
-    best_model_label = None
 
     for seed in random_seeds:
         # Split data and train model
@@ -125,11 +121,6 @@ def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5], Random_Fore
         results['r2'].append(r2)
         print(f"For file {file_path} and Seed {seed}- MSE: {mse}, R2: {r2}")
 
-        # Track the best model based on R2 score
-        if r2 > best_r2:
-            best_r2 = r2
-            best_model = model  # Save the best model
-            best_model_label = model_label  # Save model label for logging
 
     # Calculates average and std dev for MSE and R2
     mse_avg = np.mean(results['mse'])
@@ -138,16 +129,7 @@ def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5], Random_Fore
     r2_std = np.std(results['r2'])
 
     # Save the best model to a file
-    if best_model_label == 'Random Forest':
-        # Save Random Forest model using joblib
-        model_filename = f"best_rf_model_for_{file_path}.pkl"
-        joblib.dump(best_model, model_filename)
-    else:
-        # Save Keras model (Linear model or other types) using model.save() if it's a Keras model
-        model_filename = f"best_linear_model_for_{file_path}.h5"
-        best_model.save(model_filename)
-
-    print(f"Best Model (R2: {best_r2}) saved as {model_filename}")
+   
     
     return {
         'file_name': file_path,
@@ -157,8 +139,6 @@ def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5], Random_Fore
         'r2_std': r2_std,
         'mse': results['mse'],
         'r2': results['r2'],
-        'best_model_filename': model_filename,  # Include the best model filename for reference
-        'best_r2': best_r2
     }
 
 
@@ -169,7 +149,7 @@ file_names = [f for f in os.listdir(csv_path) if f.startswith('Radiomic_Features
 all_results = []
 
 # Check if the results file already exists
-results_file = f'model_results_summary_for_{model_label}.csv'
+results_file = f'/project/results/model_results_summary_for_{model_label}.csv'
 
 # Load existing results if the file exists
 if os.path.exists(results_file):
@@ -201,6 +181,3 @@ print(summary_df)
 
 
 # summary_df.to_csv('model_results_summary.csv', index=False)
-
-
-
