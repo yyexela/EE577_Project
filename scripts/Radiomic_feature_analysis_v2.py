@@ -20,11 +20,20 @@ import matplotlib.pyplot as plt
 
 pkg_path = str(Path(os.path.abspath('')).parent.absolute())
 sys.path.insert(0, pkg_path)
-# print(pkg_path)
-data_path=pkg_path+'/project/Datasets/UPENN_GBM/'
-csv_path=data_path+'csvs/'
+print(pkg_path)
+
+# Choose model type:
 model_label='Random_Forest'
 # model_label='Linear_Model'
+results_file = f'project/results/model_results_summary_for_{model_label}.csv'
+results_file_path= os.path.join(pkg_path,results_file)
+print(results_file_path)
+# reference path: /home/ee577/project/results
+
+# data_path='/home/ee577/project/Datasets/UPENN_GBM/'
+data_path=pkg_path+'/project/Datasets/UPENN_GBM/'
+csv_path=data_path+'csvs/'
+
 
 data_availability = pd.read_csv(os.path.join(data_path, 'UPENN-GBM_data_availability.csv'))
 data_availability = data_availability[data_availability['Overall Survival'] != 'not available']
@@ -100,15 +109,12 @@ def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5], Random_Fore
         # Split data and train model
         tf.random.set_seed(seed)
         X_train, X_test, y_train, y_test = train_transform(df, survival_days, seed)
-        global model_label
         if Random_Forest:
             model = get_RF_regressor(random_state=seed)
             history = train_RF_model(model, X_train, y_train)
-            model_label = 'Random_Forest'
         else:
             model = get_linear_model(X_train.shape)
             history = train_linear_model(model, X_train, y_train)
-            model_label = 'Linear_Model'
 
         # Makes predictions
         y_pred = model.predict(X_test)
@@ -152,12 +158,9 @@ file_names = [f for f in os.listdir(csv_path) if f.startswith('Radiomic_Features
 # Results
 all_results = []
 
-# Check if the results file already exists
-results_file = f'/project/results/model_results_summary_for_{model_label}.csv'
-
 # Load existing results if the file exists
-if os.path.exists(results_file):
-    Save_point_df = pd.read_csv(results_file)
+if os.path.exists(results_file_path):
+    Save_point_df = pd.read_csv(results_file_path)
     all_results = Save_point_df.to_dict(orient='records')  # Convert to list of dicts for appending
     print("Existing results found and loaded.")
 
@@ -174,7 +177,7 @@ for file_name in file_names:
         
         # Save progress after each iteration
         Save_point_df = pd.DataFrame(all_results)
-        Save_point_df.to_csv(results_file, index=False)
+        Save_point_df.to_csv(results_file_path, index=False)
         print(f"Completed processing for {file_name}")
     else:
         print(f"Skipping {file_name}, results already exist.")
