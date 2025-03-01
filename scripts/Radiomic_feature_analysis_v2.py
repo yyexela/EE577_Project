@@ -94,6 +94,7 @@ def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5], Random_Fore
     df = drop_correlated_features(df)
     df = df.dropna()
     results = {'mse': [], 'r2': []}
+    best_r2 = -float('inf')
 
     for seed in random_seeds:
         # Split data and train model
@@ -119,8 +120,10 @@ def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5], Random_Fore
         # Stores results
         results['mse'].append(mse)
         results['r2'].append(r2)
-        print(f"For file {file_path} and Seed {seed}- MSE: {mse}, R2: {r2}")
-
+        if r2 > best_r2:
+            best_r2 = r2
+        else:
+            pass
 
     # Calculates average and std dev for MSE and R2
     mse_avg = np.mean(results['mse'])
@@ -139,6 +142,7 @@ def run_experiment_for_file(file_path, random_seeds=[1, 2, 3, 4, 5], Random_Fore
         'r2_std': r2_std,
         'mse': results['mse'],
         'r2': results['r2'],
+        'best_r2': best_r2,
     }
 
 
