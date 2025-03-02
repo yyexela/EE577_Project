@@ -15,6 +15,9 @@ from argparse import Namespace
 from scipy.optimize import curve_fit
 from src import models, datasets
 from torch.utils.data import DataLoader
+import torchvision.datasets as Datasets
+import torchvision.transforms as transforms
+from transformers import AutoImageProcessor, AutoModel
 from sklearn.metrics import root_mean_squared_error
 import src.global_config as global_config
 
@@ -34,18 +37,37 @@ def first_nonzero(arr, axis, invalid_val=-1):
     return np.where(mask.any(axis=axis), mask.argmax(axis=axis), invalid_val)
 
 
-def extract_images(dataloader, modality_id):
-    images = None
-    for _, (X, _) in enumerate(dataloader):
-        if images is None:
-            images = X[:,modality_id,0,:,:]
-        else:
-            images = torch.cat((images,X[:,modality_id,0,:,:]),dim=0)
-    images = images.unsqueeze(1)
+def extract_images(dataloader, modalities_in, labels = False):
+    images_list = list()
+    for modality in modalities_in:
+        images = None
+        modality_idx = modalities['struct'].index(modality)
+        for i, (X, y) in enumerate(dataloader):
+            if images is None:
+                images = X[:,modality_idx,:,:]
+            else:
+                images = torch.cat((images,X[:,modality_idx,:,:]),dim=0)
+        images = images.unsqueeze(1)
+        images_list.append(images)
+    images = torch.cat(images_list,dim=1)
+
+    if labels:
+        labels_list = list()
+        modality = modalities_in[0]
+        labels = None
+        modality_idx = modalities['struct'].index(modality)
+        for i, (X, y) in enumerate(dataloader):
+            if labels is None:
+                labels = y
+            else:
+                labels = torch.cat((labels,y),dim=0)
+
+        return images, labels
+
     return images
 
 modalities = {
-    'struct': ['T2', 'FLAIR', 'T1', 'T1GD'],
+    'struct': ['T2', 'FLAIR', 'T1', 'T1GD', 'mask'],
     'DTI':  ['DTI_AD', 'DTI_FA', 'DTI_RD', 'DTI_TR'],
     'DSC':['DSC_ap-rCBV', 'DSC_PH', 'DSC_PSR'],
 }
@@ -409,4 +431,70 @@ def extract_each_class(dataset):
             i+=1
 
     return images
+
+def get_pretrained_embeddings(re_run = False):
+    # Make embedding dir
+    p = config.upenn_embed_dir
+    if not os.path.isdir(p):
+        os.mkdir(p)
+
+    # Try to lead embedding_dict
+    if not re_run and os.path.isfile(os.path.join(p, 'embeddings.dict')):
+        return torch.load(os.path.join(p, 'embeddings.dict'))
+
+    # Else, create embedding_dict
+
+    # Params for loading data
+    gen_params = {
+        'data_dir': config.upenn_out_dir,
+        'csv_dir': config.upenn_dir,
+        'modality': ['mods'],
+        'n_channels': 5,
+        'seed': config.seed,
+        'to_augment': False,
+        'make_augment': False,
+        'to_encode': False,
+        'to_slice': False,
+        'to_3D_slice': False,
+        'use_clinical': False,
+        'augment_types': None,
+        'batch_sz': config.load_batch_size,
+    }
+
+    #  generate training and testing dataloader
+    full_dl = datasets.load_upenn_2d_full(gen_params)
+
+    #  create static vision transformer
+    processor = AutoImageProcessor.from_pretrained('facebook/dinov2-base')
+    model = AutoModel.from_pretrained('facebook/dinov2-base')
+
+    #  calculate embedding for each image for each modality
+    embedding_dict = dict()
+    for modality in ['T2', 'FLAIR', 'T1', 'T1GD']:
+        
+        # 3 channels
+        channels = [modality, modality, 'mask']
+
+        #  extracting training and validation images
+        full_images, full_labels = extract_images(full_dl, channels, labels=True)
+
+        #  creating pytorch datasets
+        full_data = datasets.CustomLabeledDataset(full_images, full_labels, transforms=transforms.Compose([]))
+
+        output_embeddings = list()
+        labels = list()
+        for images, label in tqdm_regular(full_data):
+            with torch.no_grad():
+                inputs = processor(images=images, return_tensors="pt")
+                outputs = model(**inputs)
+                last_hidden_states = outputs.last_hidden_state
+                output_embeddings.append(last_hidden_states[:,0,:])
+                labels.append(label.unsqueeze(0))
+        output_embeddings = torch.cat(output_embeddings, dim=0)
+        labels = torch.cat(labels)
+        embedding_dict[modality] = output_embeddings
+    embedding_dict['labels'] = labels
+    torch.save(embedding_dict, os.path.join(p, 'embeddings.dict'))
+
+    return embedding_dict
 

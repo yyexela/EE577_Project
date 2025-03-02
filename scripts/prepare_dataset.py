@@ -18,13 +18,9 @@ torch.manual_seed(config.seed)
 preprocess_config = {
     'modality': ['T2', 'FLAIR', 'T1', 'T1GD'], 
     'image_type': 'autosegm',
-    'window': (140, 172, 164),
-    'pad_window': (70, 86, 86),
-    'base_dim': (155, 240, 240),
-    'downsample': True,
-    'window_idx': ((0, 140), (39, 211), (44,208)),
-    'down_factor': 0.5,
-    'augments': ['base']
+    'down_factor': 1.0,
+    'augments': ['base'],
+    'append_mask' : True
 }
 
 data_prep.convert_image_data_mod(**preprocess_config)

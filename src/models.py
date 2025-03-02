@@ -341,3 +341,158 @@ class ConvolutionalAutoencoder():
     def decode(self, x):
         decoder = self.network.decoder
         return decoder(x)
+
+class UPENN_GBM_MLPs(nn.Module):
+    def __init__(self, in_channels = 768, n_modalities = 4, out_bins = 7):
+        super().__init__()
+
+        self.n_modalities = n_modalities
+
+        self.modality_mlps = [
+            MLP(in_channels, in_channels//2, 3, in_channels//4, device = config.device)
+        ] * self.n_modalities
+        self.combined_mlp = MLP(in_channels, in_channels//4, 3, out_bins, device = config.device)
+
+        for mlp in self.modality_mlps:
+            mlp.to(config.device)
+        self.combined_mlp.to(config.device)
+
+    def forward(self, x):
+        x_outs = list()
+        for modality_idx in range(self.n_modalities):
+            x_outs.append(self.modality_mlps[modality_idx](x[:,modality_idx,:]).unsqueeze(1))
+        x_outs = torch.cat(x_outs,dim=1)
+        x_outs = x_outs.reshape(x.shape[0],-1)
+        output = self.combined_mlp(x_outs)
+        return output
+
+class UPENN_GBM_Model():
+    def __init__(self, MLP_model, in_channels = 768, n_modalities = 4, lr=1e-4):
+        self.network = MLP_model
+        self.n_modalities = n_modalities
+        self.lr = lr
+        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.lr)
+        self.in_channels = in_channels
+
+    def train(self, loss_function, epochs, batch_size, 
+            training_set, validation_set):
+    
+        #  creating log
+        log_dict = {
+            'training_loss_per_batch': [],
+            'validation_loss_per_batch': [],
+            'visualizations': []
+        } 
+
+        #  defining weight initialization function
+        def init_weights(module):
+            if isinstance(module, nn.Conv2d):
+                torch.nn.init.xavier_uniform_(module.weight)
+                module.bias.data.fill_(0.01)
+            elif isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                module.bias.data.fill_(0.01)
+
+        #  initializing network weights
+        self.network.apply(init_weights)
+
+        #  creating dataloaders
+        train_loader = DataLoader(training_set, batch_size)
+        val_loader = DataLoader(validation_set, batch_size)
+
+        #  setting convnet to training mode
+        self.network.train()
+        self.network.to(config.device)
+
+        for epoch in tqdm(range(epochs)):
+            train_losses = []
+
+            #------------
+            #  TRAINING
+            #------------
+            for _, (images, labels) in enumerate(train_loader):
+                #  zeroing gradients
+                self.optimizer.zero_grad()
+                #  sending images to device
+                images = images.to(config.device).float()
+                labels = labels.to(config.device).float()
+                #  reconstructing images
+                output = self.network(images)
+                #  computing loss
+                loss = loss_function(output, labels)
+                #  calculating gradients
+                loss.backward()
+                #  optimizing weights
+                self.optimizer.step()
+
+                #--------------
+                # LOGGING
+                #--------------
+                log_dict['training_loss_per_batch'].append(loss.item())
+
+            #--------------
+            # VALIDATION
+            #--------------
+            for _, (val_images, val_labels) in enumerate(val_loader):
+                with torch.no_grad():
+                    #  sending validation images to device
+                    val_images = val_images.to(config.device).float()
+                    val_labels = val_labels.to(config.device).float()
+                    #  reconstructing images
+                    val_output = self.network(val_images)
+                    #  computing validation loss
+                    val_loss = loss_function(val_output, val_labels)
+
+                #--------------
+                # LOGGING
+                #--------------
+                log_dict['validation_loss_per_batch'].append(val_loss.item())
+
+        return log_dict
+
+    def autoencode(self, x):
+        return self.network(x)
+
+    def encode(self, x):
+        encoder = self.network.encoder
+        return encoder(x)
+    
+    def decode(self, x):
+        decoder = self.network.decoder
+        return decoder(x)
+
+class MLP(nn.Module):
+    """
+    Creates a simple linear MLP.
+
+    `in_dim`: input dimension   
+    `width`: width of model   
+    `depth`: depth of model   
+    `out_dim`: output dimension   
+    `device`: which device to use   
+    """
+    def __init__(self, in_dim: int, width: int, depth: int, out_dim: int, device: str = 'cpu'):
+        super(MLP, self).__init__()
+        # Class variables
+        self.in_dim = in_dim
+        self.width = width
+        self.depth = depth
+        self.out_dim = out_dim
+        self.device = device
+
+        # Define model layers
+        self.layers = []
+        self.layers.append(nn.Linear(in_dim, width))
+        self.layers.append(nn.ReLU())
+        for _ in range(depth - 2): 
+            self.layers.append(nn.Linear(width, width))
+            self.layers.append(nn.ReLU())
+        self.layers.extend([nn.Linear(width, out_dim)])
+
+        model = nn.Sequential(*self.layers)
+        model = model.to(device)
+        self.model = model
+
+    def forward(self, x):
+        out = self.model(x)
+        return out

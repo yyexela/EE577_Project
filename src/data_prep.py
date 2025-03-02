@@ -23,6 +23,7 @@ from sklearn.model_selection import train_test_split
 from skimage.transform import rescale
 from skimage.util import random_noise
 from skimage.transform import rotate
+from scipy.ndimage import center_of_mass
 
 # Load config
 config = global_config.config
@@ -182,7 +183,7 @@ def split_image_v2(patients, seed=42):
     
     # Separate into train and test datasets.
     # train_test_split automatically shuffles and splits the data following predefined sizes can revisit if shuffling is not a good idea
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=seed, stratify=y)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.0, random_state=seed, stratify=y)
     
     return  X_train, y_train, X_test, y_test
 
@@ -229,7 +230,7 @@ def retrieve_patients():
 
     return patients
 
-def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='autosegm', window=(140, 172, 164), pad_window=(86, 86, 86), base_dim=(155,240,240), downsample=False, window_idx = ((0, 140), (39, 211), (44,208)), down_factor=0.5, augments=('base', 'flip', 'rotate', 'noise', 'deform')):
+def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='autosegm', down_factor=0.5, augments=('base', 'flip', 'rotate', 'noise', 'deform'), append_mask=False):
     """
     Based on a provided directory, retrieve images and save them as npy files to be used by a data generator
 
@@ -237,6 +238,10 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
     - Creates the numpy files used in training
     - Note that the paper, "Adaptive fine-tuning based transfer learning for the identification of MGMT promoter methylation status" explains the data processing methodology
     """
+    if append_mask:
+        if 'mask' not in modality:
+            modality.append("mask")
+
     patient_df = retrieve_patients()
     image_dir_ = config.upenn_image_dir
     out_dir = config.upenn_out_dir
@@ -279,6 +284,8 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
         pat = '_'.join(p.split('/')[-1].split('.')[0].split('_')[:2])
         if pat in patients:
             for mod in modality:
+                if mod == 'mask':
+                    continue
                 if f"{mod}." in p:
                     selected_structural_paths[pat][mod] = p
 
@@ -287,8 +294,6 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
     paths_df['autosegm_image_paths'] = paths_df.index.map(selected_autosegm_paths)
     paths_df['mansegm_image_paths'] = paths_df.index.map(selected_mansegm_paths)
     paths_df['structural_image_paths'] = paths_df.index.map(selected_structural_paths.get)
-
-    window = tuple(int(i * down_factor) for i in window)
 
     rng_noise = np.random.default_rng(42)
     rng_rotate = np.random.default_rng(42)
@@ -302,6 +307,8 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
         mod_arr = OrderedDict()
         for aug_idx, aug in enumerate(augments):
             for mod_idx, mod in enumerate(modality):
+                if mod == 'mask':
+                    continue
                 success_flag = True
                 if image_type == 'autosegm':
                     mask = sitk.GetArrayFromImage(sitk.ReadImage(row['autosegm_image_paths']))
@@ -334,15 +341,18 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
 
                     tumor_boxes.append(tumor_box)
 
+                # Take centroid slice
                 full_arr = np.where(mask>0, struct, 0)
-                #full_arr = np.where(np.logical_and(mask>0, mask!=2), struct, 0)
+                com = center_of_mass(full_arr)
+                full_arr = struct[int(com[0])]
 
-                # Starts with dim 155x240x240 and selects box with dim 140x172x164, then downsample by a factor of 2
-                full_arr = full_arr[window_idx[0][0]:window_idx[0][1], window_idx[1][0]:window_idx[1][1], window_idx[2][0]:window_idx[2][1]]
-                struct = struct[window_idx[0][0]:window_idx[0][1], window_idx[1][0]:window_idx[1][1], window_idx[2][0]:window_idx[2][1]]
+                if append_mask and (aug_idx + mod_idx == 0):
+                    mask_arr = (mask[int(com[0])] >= 1.0).astype(float)
+                    mod_arr['mask'] = mask_arr
 
-                full_arr = rescale(full_arr, down_factor)
-                struct = rescale(struct, down_factor)
+                if down_factor < 1.0:
+                    full_arr = rescale(full_arr, down_factor)
+                    struct = rescale(struct, down_factor)
 
                 #winsorize(full_arr, limits=(0.0,0.01), inplace=True)
                 #winsorize(struct, limits=(0.0,0.01), inplace=True)
@@ -355,38 +365,9 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
                 full_arr = (full_arr - full_min) / (full_max - full_min)
                 struct = (struct - struct_min) / (struct_max - struct_min)
 
-
-                full_shape = np.shape(full_arr)
-                if full_shape != pad_window:
-
-                    difference_axis_0 = abs(full_shape[0]-pad_window[0])
-                    difference_axis_1 = abs(full_shape[1]-pad_window[1])
-                    difference_axis_2 = abs(full_shape[2]-pad_window[2])
-
-                    split_axis_0 = difference_axis_0 // 2
-                    rem_axis_0 = difference_axis_0 % 2
-                    split_axis_1 = difference_axis_1 // 2
-                    rem_axis_1 = difference_axis_1 % 2
-                    split_axis_2 = difference_axis_2 // 2
-                    rem_axis_2 = difference_axis_2 % 2
-
-                    full_arr = np.pad(full_arr, pad_width=((split_axis_0, split_axis_0+rem_axis_0), 
-                                                       (split_axis_1, split_axis_1+rem_axis_1),
-                                                       (split_axis_2, split_axis_2+rem_axis_2)),
-                                                       mode='constant', constant_values=0)
-                    struct = np.pad(struct, pad_width=((split_axis_0, split_axis_0+rem_axis_0), 
-                                                       (split_axis_1, split_axis_1+rem_axis_1),
-                                                       (split_axis_2, split_axis_2+rem_axis_2)),
-                                                       mode='constant', constant_values=0)
-                    #if full_shape[0] < 64:
-                    #    difference = 64 - full_shape[0]
-                    #    ed_arr = np.concatenate((ed_arr, np.zeros((difference, full_shape[1], full_shape[2]))), axis=0)
-                    #    et_arr = np.concatenate((et_arr, np.zeros((difference, full_shape[1], full_shape[2]))), axis=0)
-                    #    nc_arr = np.concatenate((nc_arr, np.zeros((difference, full_shape[1], full_shape[2]))), axis=0)
-                    #    full_arr = np.concatenate((full_arr, np.zeros((difference, full_shape[1], full_shape[2]))), axis=0)
-
                 mod_arr[mod] = full_arr
             
+            # CRITICAL: Need to update this for if it's used with masks
             if success_flag:
                 arr = np.array([mod_arr[mod] for mod in modality])
                 if 'noise' in aug:
@@ -400,9 +381,16 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
                 if 'deform' in aug:
                     #arr = elasticdeform.deform_random_grid(arr, sigma=5, order=0, axis=(1,2,3))
                     raise Exception("Not using elasticdeform anymore")
-
                 if 'base' in aug:
-                    np.save(os.path.join(out_dir, f"{pat}_mods.npy"), np.array([mod_arr[mod] for mod in modality]))
+                    save_arr = np.array([mod_arr[mod] for mod in modality])
+                    print(f"max {save_arr.max()}, min {save_arr.min()}")
+                    if save_arr.shape != (5,240,240):
+                        raise Exception(f"pat {pat} shape is bad {save_arr.shape}")
+                    if save_arr.max() != 1.0:
+                        raise Exception(f"pat {pat} max is bad {save_arr.max()}")
+                    if save_arr.min() != 0.0:
+                        raise Exception(f"pat {pat} max is bad {save_arr.min()}")
+                    np.save(os.path.join(out_dir, f"{pat}_mods.npy"), save_arr)
                 else:
                     np.save(os.path.join(out_dir, f"{pat}_{aug}_mods.npy"), arr)
                 #np.save(os.path.join(out_dir, pat+'_'+modality+'.npy'), et_arr)

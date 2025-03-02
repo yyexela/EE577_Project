@@ -26,11 +26,10 @@ else:
     config.device = 'cpu'
     print('Running on the CPU')
 
-
 # Params for loading data
 gen_params = {
-    'data_dir': os.path.join(config.upenn_dir, 'numpy_conversion_struct_channels'),
-    'csv_dir': os.path.join(config.upenn_dir),
+    'data_dir': config.upenn_out_dir,
+    'csv_dir': config.upenn_dir,
     'modality': ['mods'],
     'dim': (70,86,86),
     'n_channels': 4,

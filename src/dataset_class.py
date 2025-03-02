@@ -13,15 +13,13 @@ class DatasetGenerator(torch.utils.data.Dataset):
     """
     generate images for pytorch dataset
     """
-    def __init__(self, data_indices, labels, data_dir='../../data/upenn_GBM/images/NIfTI-files/', csv_dir='../../data/upenn_GBM/csvs/radiomic_features_CaPTk/', modality=['FLAIR'], dim=(70,86,86), n_channels=3, channel_idx=None, n_classes=1, to_augment=False, make_augment = False, to_encode=False, to_slice=False, to_3D_slice=False, n_slices=10, augment_types=('noise', 'flip', 'rotate', 'deform'), seed=42, batch_sz = 1, transform=None, target_transform=None, use_clinical=False, use_class_weights=False):
+    def __init__(self, data_indices, labels, data_dir='../../data/upenn_GBM/images/NIfTI-files/', csv_dir='../../data/upenn_GBM/csvs/radiomic_features_CaPTk/', modality=['FLAIR'], n_channels=3, channel_idx=None, n_classes=1, to_augment=False, make_augment = False, to_encode=False, to_slice=False, to_3D_slice=False, augment_types=('noise', 'flip', 'rotate', 'deform'), seed=42, batch_sz = 1, transform=None, target_transform=None, use_clinical=False, use_class_weights=False):
         self.labels = labels
         self.data_indices = data_indices
 
         self.n_channels = n_channels
         self.channel_idx = channel_idx
         self.n_classes = n_classes
-        self.dim = dim
-        self.n_slices = n_slices
         self.to_slice = to_slice
         self.to_3D_slice = to_3D_slice
         self.rng_noise = np.random.default_rng(seed)

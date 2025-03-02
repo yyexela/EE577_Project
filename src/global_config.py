@@ -65,10 +65,12 @@ class Config(Namespace):
 
         self.upenn_csv_dir = os.path.join(self.upenn_dir, 'csvs')
         self.upenn_image_dir = os.path.join(self.upenn_dir, 'PKG-UPENN-GBM-NIfTI', 'UPENN-GBM', 'NIfTI-files')
-        self.upenn_out_dir = os.path.join(self.upenn_dir, 'numpy_conversion_struct_channels')
+        self.upenn_out_dir = os.path.join(self.upenn_dir, 'numpy_conversion_struct_channels_v2')
+        self.upenn_embed_dir = os.path.join(self.upenn_dir, 'embeddings')
         self.classifier = 'Survival_from_surgery_days_UPDATED'
 
         self.seed = 42
+        self.load_batch_size = 256
 
         # Create those directories
         for newpath in [self.dataset_dir, self.checkpoint_dir, self.pickle_dir, self.image_dir]:

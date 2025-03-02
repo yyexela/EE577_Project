@@ -24,6 +24,17 @@ config = global_config.config
 # Functions # Functions # Functions # Functions # Functions #
 #############################################################
 
+def load_upenn_2d_full(gen_params):
+    patients = dp.retrieve_patients()
+
+    X = patients.index
+    y = patients
+
+    full_data = DatasetGenerator(X, y, **gen_params)
+    full_dataloader = DataLoader(full_data, batch_size=1, shuffle=True, pin_memory=True)
+
+    return full_dataloader
+
 def load_upenn_2d_struct(gen_params):
     """
     Load UPENN dataset 2d structs ('T2', 'FLAIR', 'T1', 'T1GD')
@@ -515,3 +526,20 @@ class CustomDataset(Dataset):
         if self.transforms!=None:
             image = self.transforms(image)
         return image
+
+class CustomLabeledDataset(Dataset):
+    def __init__(self, data, labels, transforms=None):
+        self.data = data
+        self.labels = labels
+        self.transforms = transforms
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        image = self.data[idx]
+        label = self.labels[idx]
+
+        if self.transforms!=None:
+            image = self.transforms(image)
+        return image, label
