@@ -229,7 +229,7 @@ def retrieve_patients():
 
     return patients
 
-def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='autosegm', window=(140, 172, 164), pad_window=(86, 86, 86), base_dim=(155,240,240), downsample=False, window_idx = ((0, 140), (39, 211), (44,208)), down_factor=0.5, augments=('base', 'flip', 'rotate', 'noise', 'deform')):
+def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='autosegm', window=(140, 172, 164), pad_window=(86, 86, 86), crop = False, window_idx = ((0, 140), (39, 211), (44,208)), down_factor=0.5, augments=('base', 'flip', 'rotate', 'noise', 'deform')):
     """
     Based on a provided directory, retrieve images and save them as npy files to be used by a data generator
 
@@ -240,6 +240,9 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
     patient_df = retrieve_patients()
     image_dir_ = config.upenn_image_dir
     out_dir = config.upenn_out_dir
+    contains_DTI=False
+    contains_DSC=False
+    contains_struc=False
 
     if not os.path.isdir(out_dir):
         os.makedirs(out_dir)
@@ -249,8 +252,28 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
     mansegm_dir = os.path.join(image_dir_, 'images_segm')
 
     structural_dir = []
-    structural_dir.append(os.path.join(image_dir_, 'images_structural'))
+    has_stuct_path=['T2', 'FLAIR', 'T1', 'T1GD']
+    dti_mod_name=['AD', 'FA', 'RD', 'TR']
+    dsc_mod_name=['ap-rCBV', 'PH', 'PSR']
 
+    if 'DTI' in modality:
+            contains_DTI=True
+            structural_dir.append(os.path.join(image_dir_, 'images_DTI'))
+    if 'DSC' in modality:
+            contains_DSC = True
+            structural_dir.append(os.path.join(image_dir_, 'images_DSC'))
+    if isinstance(modality, list):
+        if any(m in has_stuct_path for m in modality):
+            contains_struc=True
+            structural_dir.append(os.path.join(image_dir_, 'images_structural'))
+            print('structural_dir: appended')
+    elif isinstance(modality, str):
+        if modality in has_stuct_path :
+            contains_struc=True
+            structural_dir.append(os.path.join(image_dir_, 'images_structural'))
+            print('structural_dir: appended')
+    else:
+        pass
     autosegm_paths = [os.path.join(r, d, f1) if len(d)>0 else os.path.join(r, f1) for r, d, f in os.walk(autosegm_dir) for f1 in f]
     mansegm_paths = [os.path.join(r, d, f1) if len(d)>0 else os.path.join(r, f1) for r, d, f in os.walk(mansegm_dir) for f1 in f]
 
@@ -268,25 +291,64 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
     selected_autosegm_paths = {'_'.join(p.split('/')[-1].split('.')[0].split('_')[:2]): p for p in autosegm_paths if '_'.join(p.split('/')[-1].split('.')[0].split('_')[:2]) in patients}
     selected_mansegm_paths = {'_'.join(p.split('/')[-1].split('.')[0].split('_')[:2]): p for p in mansegm_paths if '_'.join(p.split('/')[-1].split('.')[0].split('_')[:2]) in patients}
 
-    selected_structural_paths = {}
+    selected_structural_paths = {} 
+    selected_dti_paths = {}  
+    selected_dsc_paths = {} 
 
-    for p in structural_paths:
-        pat = '_'.join(p.split('/')[-1].split('.')[0].split('_')[:2])
-        if pat in patients:
-            selected_structural_paths[pat] = {}
+    if contains_struc:
+        for p in structural_paths:
+            pat = '_'.join(p.split('/')[-1].split('.')[0].split('_')[:2])
+            if pat in patients:
+                selected_structural_paths[pat] = {}
 
-    for p in structural_paths:
-        pat = '_'.join(p.split('/')[-1].split('.')[0].split('_')[:2])
-        if pat in patients:
-            for mod in modality:
-                if f"{mod}." in p:
-                    selected_structural_paths[pat][mod] = p
+        for p in structural_paths:
+            pat = '_'.join(p.split('/')[-1].split('.')[0].split('_')[:2])
+            if pat in patients:
+                for mod in modality:
+                    if f"{mod}." in p:
+                        selected_structural_paths[pat][mod] = p
+    if contains_DTI:
+        for p in  structural_paths:
+            # Extract patient ID (same as in structural paths)
+            pat = '_'.join(p.split('/')[-1].split('.')[0].split('_')[:2])
+            
+            # If the patient ID exists in the patients list
+            if pat in patients:
+                # Initialize the dictionary for the patient if it doesn't exist
+                if pat not in selected_dti_paths:
+                    selected_dti_paths[pat] = {}
+                
+                # Loop through each DTI modality
+                for dti_mod in dti_mod_name:  # DTI modalities
+                    if f"DTI_{dti_mod}." in p:  # Check if the DTI modality is present in the file path
+                        selected_dti_paths[pat][dti_mod] = p
+    if contains_DSC:
+            # Iterate over DSC paths
+        for p in  structural_paths:
+            # Extract patient ID (same as in structural paths)
+            pat = '_'.join(p.split('/')[-1].split('.')[0].split('_')[:2])
+            
+            # If the patient ID exists in the patients list
+            if pat in patients:
+                # Initialize the dictionary for the patient if it doesn't exist
+                if pat not in selected_dsc_paths:
+                    selected_dsc_paths[pat] = {}
+                
+                # Loop through each DSC modality
+                for dsc_mod in dsc_mod_name:  # DSC modalities
+                    if f"DSC_{dsc_mod}." in p:  # Check if the DSC modality is present in the file path
+                        selected_dsc_paths[pat][dsc_mod] = p
 
     paths_df = pd.DataFrame(patient_df)
     paths_df.sort_index(inplace=True)
     paths_df['autosegm_image_paths'] = paths_df.index.map(selected_autosegm_paths)
     paths_df['mansegm_image_paths'] = paths_df.index.map(selected_mansegm_paths)
-    paths_df['structural_image_paths'] = paths_df.index.map(selected_structural_paths.get)
+    if contains_struc:
+        paths_df['structural_image_paths'] = paths_df.index.map(selected_structural_paths.get)
+    if contains_DSC:
+        paths_df['dsc_image_paths'] = paths_df.index.map(selected_dsc_paths.get)
+    if contains_DTI:
+        paths_df["dti_image_paths"] = paths_df.index.map(selected_dsc_paths.get)
 
     window = tuple(int(i * down_factor) for i in window)
 
@@ -296,132 +358,143 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
     failed_pats = []
     tumor_boxes = []
     pat = None
+    first_pass = True
     pbar = tqdm(paths_df.iterrows(), total=paths_df.shape[0])
-    for pat, row in pbar:
-        pbar.set_description(f"Processing patient {pat}")
-        mod_arr = OrderedDict()
-        for aug_idx, aug in enumerate(augments):
-            for mod_idx, mod in enumerate(modality):
-                success_flag = True
-                if image_type == 'autosegm':
-                    mask = sitk.GetArrayFromImage(sitk.ReadImage(row['autosegm_image_paths']))
-                elif image_type == 'mansegm' and np.logical_not(row['mansegm_image_paths'] != row['mansegm_image_paths']):
-                    mask = sitk.GetArrayFromImage(sitk.ReadImage(row['mansegm_image_paths']))
-                else:
-                    mask = sitk.GetArrayFromImage(sitk.ReadImage(row['autosegm_image_paths']))
-                try:
-                    struct = sitk.GetArrayFromImage(sitk.ReadImage(row['structural_image_paths'][mod]))
-                except:
-                    print(f"ERROR in patient {pat}, augmentation {aug}, and mod {mod}")
-                    print("row:")
-                    print(row)
-                    print("skipping...")
-                    failed_pats.append(pat)
-                    print()
-                    success_flag = False
-                    continue
 
-                if aug_idx + mod_idx == 0:
-                    flipped_mask = np.flip(np.flip(np.flip(mask,0),1),2)
+    def get_images(mod_idx, mod, aug_idx, aug, path_names, row, tumor_boxes,mod_arr):
+        """
+        Handles loading and processing of images based on modality type.
+        
+        Args:
+            mod_idx: The index of the current modality.
+            mod: The current modality name.
+            aug_idx: The index of the current augmentation.
+            aug: The current augmentation method.
+            path_names: Path name (e.g., 'structural_image_paths', 'dsc_image_paths', 'dti_image_paths').
+            row: Data from the dataframe containing file paths.
+            tumor_boxes: List to store tumor boxes for each augmentation/modality.
 
-                    tumor_box = ([int(np.min(helpers.first_nonzero(mask, 0, np.inf))),
-                                mask.shape[0]-int(np.min(helpers.first_nonzero(flipped_mask, 0, np.inf)))],
-                                [int(np.min(helpers.first_nonzero(mask, 1, np.inf))),
-                                mask.shape[1]-int(np.min(helpers.first_nonzero(flipped_mask, 1, np.inf)))],
-                                [int(np.min(helpers.first_nonzero(mask, 2, np.inf))),mask.shape[2]-int(np.min(helpers.first_nonzero(flipped_mask, 2, np.inf)))])
+        Returns:
+            full_arr: The processed image array.
+            struct: The corresponding structural image array.
+            success_flag: A flag indicating whether processing was successful.
+            tumor_boxes: Updated list of tumor boxes.
+        """
+        success_flag = True
+        try:
+            # Read mask based on image type
+            if image_type == 'autosegm':
+                mask = sitk.GetArrayFromImage(sitk.ReadImage(row['autosegm_image_paths']))
+            elif image_type == 'mansegm' and np.logical_not(row['mansegm_image_paths'] != row['mansegm_image_paths']):
+                mask = sitk.GetArrayFromImage(sitk.ReadImage(row['mansegm_image_paths']))
+            else:
+                mask = sitk.GetArrayFromImage(sitk.ReadImage(row['autosegm_image_paths']))
 
-                    pbar.set_description(f"Processing patient {pat}, tumor box: {tumor_box}")
+            # Read the corresponding structural image based on the modality
+            struct = sitk.GetArrayFromImage(sitk.ReadImage(row[path_names][mod]))
 
-                    tumor_boxes.append(tumor_box)
+            # Tumor box calculation, if needed
+            if aug_idx + mod_idx == 0:
+                flipped_mask = np.flip(np.flip(np.flip(mask, 0), 1), 2)
+                tumor_box = ([int(np.min(helpers.first_nonzero(mask, 0, np.inf))),
+                            mask.shape[0] - int(np.min(helpers.first_nonzero(flipped_mask, 0, np.inf)))],
+                            [int(np.min(helpers.first_nonzero(mask, 1, np.inf))),
+                            mask.shape[1] - int(np.min(helpers.first_nonzero(flipped_mask, 1, np.inf)))],
+                            [int(np.min(helpers.first_nonzero(mask, 2, np.inf))),
+                            mask.shape[2] - int(np.min(helpers.first_nonzero(flipped_mask, 2, np.inf)))])
+                tumor_boxes.append(tumor_box)
 
-                full_arr = np.where(mask>0, struct, 0)
-                #full_arr = np.where(np.logical_and(mask>0, mask!=2), struct, 0)
+            # Process the full_arr based on mask and struct
+            full_arr = np.where(mask > 0, struct, 0)
 
-                # Starts with dim 155x240x240 and selects box with dim 140x172x164, then downsample by a factor of 2
+            # Crop and downscale if needed
+            if crop:
                 full_arr = full_arr[window_idx[0][0]:window_idx[0][1], window_idx[1][0]:window_idx[1][1], window_idx[2][0]:window_idx[2][1]]
                 struct = struct[window_idx[0][0]:window_idx[0][1], window_idx[1][0]:window_idx[1][1], window_idx[2][0]:window_idx[2][1]]
 
-                full_arr = rescale(full_arr, down_factor)
-                struct = rescale(struct, down_factor)
+            full_arr = rescale(full_arr, down_factor)
+            struct = rescale(struct, down_factor)
 
-                #winsorize(full_arr, limits=(0.0,0.01), inplace=True)
-                #winsorize(struct, limits=(0.0,0.01), inplace=True)
+            # Normalize the image arrays
+            full_min = np.min(full_arr)
+            full_max = np.max(full_arr)
+            struct_min = np.min(struct)
+            struct_max = np.max(struct)
 
-                full_min = np.min(full_arr)
-                full_max = np.max(full_arr)
-                struct_min = np.min(struct)
-                struct_max = np.max(struct)
-                # scale by the maximum of each image rather than the feature maximum
-                full_arr = (full_arr - full_min) / (full_max - full_min)
-                struct = (struct - struct_min) / (struct_max - struct_min)
+            full_arr = (full_arr - full_min) / (full_max - full_min)
+            struct = (struct - struct_min) / (struct_max - struct_min)
+
+            # Handle padding if the array shape doesn't match the desired window size
+            full_shape = np.shape(full_arr)
+            if full_shape != pad_window:
+                difference_axis_0 = abs(full_shape[0] - pad_window[0])
+                difference_axis_1 = abs(full_shape[1] - pad_window[1])
+                difference_axis_2 = abs(full_shape[2] - pad_window[2])
+
+                split_axis_0 = difference_axis_0 // 2
+                rem_axis_0 = difference_axis_0 % 2
+                split_axis_1 = difference_axis_1 // 2
+                rem_axis_1 = difference_axis_1 % 2
+                split_axis_2 = difference_axis_2 // 2
+                rem_axis_2 = difference_axis_2 % 2
+
+                full_arr = np.pad(full_arr, pad_width=((split_axis_0, split_axis_0 + rem_axis_0),
+                                                        (split_axis_1, split_axis_1 + rem_axis_1),
+                                                        (split_axis_2, split_axis_2 + rem_axis_2)),
+                                                        mode='constant', constant_values=0)
+                struct = np.pad(struct, pad_width=((split_axis_0, split_axis_0 + rem_axis_0),
+                                                    (split_axis_1, split_axis_1 + rem_axis_1),
+                                                    (split_axis_2, split_axis_2 + rem_axis_2)),
+                                                    mode='constant', constant_values=0)
+        except Exception as e:
+            print(f"Error processing modality {mod}: {e}")
+            success_flag = False
+            struct = None
+            full_arr = None
+
+        return full_arr, struct, success_flag, tumor_boxes
+    # Initialize tumor_boxes list
+    tumor_boxes = []
+
+    for pat, row in pbar:
+        mod_arr = OrderedDict()  # Initialize an ordered dict for each patient
+        for aug_idx, aug in enumerate(augments):
+            if contains_struc:
+                for mod_idx, mod in enumerate(modality):
+                    path_names = 'structural_image_paths'  # Set the path names for structural modalities
+                    full_arr, struct, success_flag, tumor_boxes = get_images(mod_idx, mod, aug_idx, aug, path_names, row, tumor_boxes,mod_arr)
+                    mod_arr[mod] = full_arr
+                    if not success_flag:
+                        continue
+            if contains_DSC:
+                for mod_idx, mod in enumerate(dsc_mod_name):
+                    path_names = 'dsc_image_paths'  # Set the path names for DSC modalities
+                    full_arr, struct, success_flag, tumor_boxes = get_images(mod_idx, mod, aug_idx, aug, path_names, row, tumor_boxes,mod_arr)
+                    mod_arr[mod] = full_arr
+                    if not success_flag:
+                        continue
+            if contains_DTI:
+                for mod_idx, mod in enumerate(dti_mod_name):
+                    path_names = 'dti_image_paths'  # Set the path names for DTI modalities
+                    full_arr, struct, success_flag, tumor_boxes = get_images(mod_idx, mod, aug_idx, aug, path_names, row, tumor_boxes,mod_arr)
+                    mod_arr[mod] = full_arr
+                    if not success_flag:
+                        continue
 
 
-                full_shape = np.shape(full_arr)
-                if full_shape != pad_window:
+    # After the loop finishes, you can access tumor_boxes to process them further or save them
+    print(f"Total tumor boxes collected: {len(tumor_boxes)}")
 
-                    difference_axis_0 = abs(full_shape[0]-pad_window[0])
-                    difference_axis_1 = abs(full_shape[1]-pad_window[1])
-                    difference_axis_2 = abs(full_shape[2]-pad_window[2])
-
-                    split_axis_0 = difference_axis_0 // 2
-                    rem_axis_0 = difference_axis_0 % 2
-                    split_axis_1 = difference_axis_1 // 2
-                    rem_axis_1 = difference_axis_1 % 2
-                    split_axis_2 = difference_axis_2 // 2
-                    rem_axis_2 = difference_axis_2 % 2
-
-                    full_arr = np.pad(full_arr, pad_width=((split_axis_0, split_axis_0+rem_axis_0), 
-                                                       (split_axis_1, split_axis_1+rem_axis_1),
-                                                       (split_axis_2, split_axis_2+rem_axis_2)),
-                                                       mode='constant', constant_values=0)
-                    struct = np.pad(struct, pad_width=((split_axis_0, split_axis_0+rem_axis_0), 
-                                                       (split_axis_1, split_axis_1+rem_axis_1),
-                                                       (split_axis_2, split_axis_2+rem_axis_2)),
-                                                       mode='constant', constant_values=0)
-                    #if full_shape[0] < 64:
-                    #    difference = 64 - full_shape[0]
-                    #    ed_arr = np.concatenate((ed_arr, np.zeros((difference, full_shape[1], full_shape[2]))), axis=0)
-                    #    et_arr = np.concatenate((et_arr, np.zeros((difference, full_shape[1], full_shape[2]))), axis=0)
-                    #    nc_arr = np.concatenate((nc_arr, np.zeros((difference, full_shape[1], full_shape[2]))), axis=0)
-                    #    full_arr = np.concatenate((full_arr, np.zeros((difference, full_shape[1], full_shape[2]))), axis=0)
-
-                mod_arr[mod] = full_arr
-            
-            if success_flag:
-                arr = np.array([mod_arr[mod] for mod in modality])
-                if 'noise' in aug:
-                    arr = random_noise(arr, mode='gaussian', seed=rng_noise)
-                if 'rotation' in aug:
-                    angle = rng_rotate.integers(-180, high=180)
-                    for i in range(len(arr)):
-                        arr[i,:,:,:] = rotate(arr[i,:,:,:], angle, preserve_range=True)
-                if 'flip' in aug:
-                    arr = np.flip(arr, axis=(1,2,3)).copy()
-                if 'deform' in aug:
-                    #arr = elasticdeform.deform_random_grid(arr, sigma=5, order=0, axis=(1,2,3))
-                    raise Exception("Not using elasticdeform anymore")
-
-                if 'base' in aug:
-                    np.save(os.path.join(out_dir, f"{pat}_mods.npy"), np.array([mod_arr[mod] for mod in modality]))
-                else:
-                    np.save(os.path.join(out_dir, f"{pat}_{aug}_mods.npy"), arr)
-                #np.save(os.path.join(out_dir, pat+'_'+modality+'.npy'), et_arr)
-                #np.save(os.path.join(out_dir, pat+'_'+modality+'.npy'), nc_arr)
-                #np.save(os.path.join(out_dir, pat+'_'+modality+'.npy'), full_arr)
-
-        if success_flag:
-            del mask
-            del struct
-
-    print(f"Failed patients for {modality}:")
-    print(list(set(failed_pats)))
-
+    print(structural_dir)
     print()
-    print(f"Tumor box data:")
-    flattened_data = [np.array(tuple).flatten() for tuple in tumor_boxes]
-    df = pd.DataFrame(flattened_data)
-    df.columns = ["X min", "X max", "Y min", "Y max", "Z min", "Z max"]
-    df.index = list(paths_df.index)[0:df.shape[0]]
-    print(df.describe())
+    if not tumor_boxes:
+        print("No tumor boxes found.")
+    else:
+        print(f"Tumor box data:")
+        flattened_data = [np.array(tuple).flatten() for tuple in tumor_boxes]
+        df = pd.DataFrame(flattened_data)
+        df.columns = ["X min", "X max", "Y min", "Y max", "Z min", "Z max"]
+        df.index = list(paths_df.index)[0:df.shape[0]]
+        print(df.describe())
 
     return paths_df
