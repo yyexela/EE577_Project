@@ -348,7 +348,7 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
     if contains_DSC:
         paths_df['dsc_image_paths'] = paths_df.index.map(selected_dsc_paths.get)
     if contains_DTI:
-        paths_df["dti_image_paths"] = paths_df.index.map(selected_dsc_paths.get)
+        paths_df["dti_image_paths"] = paths_df.index.map(selected_dti_paths.get)
 
     window = tuple(int(i * down_factor) for i in window)
 
@@ -360,11 +360,13 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
     pat = None
     first_pass = True
     pbar = tqdm(paths_df.iterrows(), total=paths_df.shape[0])
+    global struct_checked
+    struct_checked = False
 
-    def get_images(mod_idx, mod, aug_idx, aug, path_names, row, tumor_boxes,mod_arr):
+    def get_images(mod_idx, mod, aug_idx, aug, path_names, row, tumor_boxes, mod_arr):
         """
         Handles loading and processing of images based on modality type.
-        
+
         Args:
             mod_idx: The index of the current modality.
             mod: The current modality name.
@@ -380,42 +382,68 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
             success_flag: A flag indicating whether processing was successful.
             tumor_boxes: Updated list of tumor boxes.
         """
+        global struct_checked
         success_flag = True
+        struct = None  # Ensure struct is initialized to None
+
+        # Read mask based on image type
+        if image_type == 'autosegm':
+            mask = sitk.GetArrayFromImage(sitk.ReadImage(row['autosegm_image_paths']))
+        elif image_type == 'mansegm' and np.logical_not(row['mansegm_image_paths'] != row['mansegm_image_paths']):
+            mask = sitk.GetArrayFromImage(sitk.ReadImage(row['mansegm_image_paths']))
+        else:
+            mask = sitk.GetArrayFromImage(sitk.ReadImage(row['autosegm_image_paths']))
+
         try:
-            # Read mask based on image type
-            if image_type == 'autosegm':
-                mask = sitk.GetArrayFromImage(sitk.ReadImage(row['autosegm_image_paths']))
-            elif image_type == 'mansegm' and np.logical_not(row['mansegm_image_paths'] != row['mansegm_image_paths']):
-                mask = sitk.GetArrayFromImage(sitk.ReadImage(row['mansegm_image_paths']))
-            else:
-                mask = sitk.GetArrayFromImage(sitk.ReadImage(row['autosegm_image_paths']))
-
-            # Read the corresponding structural image based on the modality
             struct = sitk.GetArrayFromImage(sitk.ReadImage(row[path_names][mod]))
+            if struct is None:
+                print(f"Error: Struct is None for modality {mod}. Exiting function.")
+                success_flag = False
+                return None, None, success_flag, tumor_boxes  # Return early with None for struct
 
-            # Tumor box calculation, if needed
-            if aug_idx + mod_idx == 0:
-                flipped_mask = np.flip(np.flip(np.flip(mask, 0), 1), 2)
-                tumor_box = ([int(np.min(helpers.first_nonzero(mask, 0, np.inf))),
-                            mask.shape[0] - int(np.min(helpers.first_nonzero(flipped_mask, 0, np.inf)))],
-                            [int(np.min(helpers.first_nonzero(mask, 1, np.inf))),
-                            mask.shape[1] - int(np.min(helpers.first_nonzero(flipped_mask, 1, np.inf)))],
-                            [int(np.min(helpers.first_nonzero(mask, 2, np.inf))),
-                            mask.shape[2] - int(np.min(helpers.first_nonzero(flipped_mask, 2, np.inf)))])
-                tumor_boxes.append(tumor_box)
+        except Exception as e:
+            #print(f"Error processing modality {mod}: {e}")
+            print(f"Attempting to read file: from row, path_names, mod: {row}{path_names}{mod}")
+            success_flag = False
+            struct = None
+            full_arr = None
+            return full_arr, struct, success_flag, tumor_boxes  # Return None if error occurs
 
-            # Process the full_arr based on mask and struct
+
+        if not struct_checked:
+                print(f"Checking struct for patient {pat}, augmentation {aug}:")
+                print(struct)
+                struct_checked = True
+
+        # Tumor box calculation, if needed
+        if aug_idx + mod_idx == 0:
+            flipped_mask = np.flip(np.flip(np.flip(mask, 0), 1), 2)
+            tumor_box = ([int(np.min(helpers.first_nonzero(mask, 0, np.inf))),
+                        mask.shape[0] - int(np.min(helpers.first_nonzero(flipped_mask, 0, np.inf)))],
+                        [int(np.min(helpers.first_nonzero(mask, 1, np.inf))),
+                        mask.shape[1] - int(np.min(helpers.first_nonzero(flipped_mask, 1, np.inf)))],
+                        [int(np.min(helpers.first_nonzero(mask, 2, np.inf))),
+                        mask.shape[2] - int(np.min(helpers.first_nonzero(flipped_mask, 2, np.inf)))])
+            tumor_boxes.append(tumor_box)
+
+        # Process the full_arr based on mask and struct (only if struct is not None)
+        if struct is not None:
             full_arr = np.where(mask > 0, struct, 0)
+        else:
+            full_arr = None  # Set full_arr to None if struct is None
 
-            # Crop and downscale if needed
-            if crop:
-                full_arr = full_arr[window_idx[0][0]:window_idx[0][1], window_idx[1][0]:window_idx[1][1], window_idx[2][0]:window_idx[2][1]]
-                struct = struct[window_idx[0][0]:window_idx[0][1], window_idx[1][0]:window_idx[1][1], window_idx[2][0]:window_idx[2][1]]
+        # Crop and downscale if needed
+        if crop and struct is not None:
+            full_arr = full_arr[window_idx[0][0]:window_idx[0][1], window_idx[1][0]:window_idx[1][1], window_idx[2][0]:window_idx[2][1]]
+            struct = struct[window_idx[0][0]:window_idx[0][1], window_idx[1][0]:window_idx[1][1], window_idx[2][0]:window_idx[2][1]]
 
+        # Rescale images
+        if struct is not None:
             full_arr = rescale(full_arr, down_factor)
             struct = rescale(struct, down_factor)
 
-            # Normalize the image arrays
+        # Normalize the image arrays
+        if struct is not None:
             full_min = np.min(full_arr)
             full_max = np.max(full_arr)
             struct_min = np.min(struct)
@@ -424,7 +452,8 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
             full_arr = (full_arr - full_min) / (full_max - full_min)
             struct = (struct - struct_min) / (struct_max - struct_min)
 
-            # Handle padding if the array shape doesn't match the desired window size
+        # Handle padding if the array shape doesn't match the desired window size
+        if struct is not None:
             full_shape = np.shape(full_arr)
             if full_shape != pad_window:
                 difference_axis_0 = abs(full_shape[0] - pad_window[0])
@@ -446,13 +475,9 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
                                                     (split_axis_1, split_axis_1 + rem_axis_1),
                                                     (split_axis_2, split_axis_2 + rem_axis_2)),
                                                     mode='constant', constant_values=0)
-        except Exception as e:
-            print(f"Error processing modality {mod}: {e}")
-            success_flag = False
-            struct = None
-            full_arr = None
 
         return full_arr, struct, success_flag, tumor_boxes
+
     # Initialize tumor_boxes list
     tumor_boxes = []
 
