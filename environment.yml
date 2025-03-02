@@ -29,5 +29,6 @@ dependencies:
   - python-kaleido
   - torchmetrics
   - tensorboard
+  - transformers
 # pip install simpleitk
 # pip install elasticdeform

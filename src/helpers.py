@@ -400,7 +400,7 @@ def extract_each_class(dataset):
         for label in tqdm_regular(dataset.targets):
             if label==j:
                 images.append(dataset.data[i])
-                print(f'class {j} found')
+                #print(f'class {j} found')
                 i+=1
                 j+=1
             if j==10:

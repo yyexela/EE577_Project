@@ -20,14 +20,14 @@ config = global_config.config
 #######################################################
 
 #  defining encoder
-class Encoder(nn.Module):
+class CIFAR10Encoder(nn.Module):
     def __init__(self, in_channels=3, out_channels=16, latent_dim=200, img_len=32, act_fn=nn.ReLU()):
         super().__init__()
 
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.img_len = img_len
-        self.out_img_len = 8 if in_channels == 3 else 27 # CIFAR10 or UPENN_GBM
+        self.out_img_len = 8
 
         self.net = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, self.in_channels, padding=1), # (32, 32)
@@ -58,14 +58,14 @@ class Encoder(nn.Module):
 
 
 #  defining decoder
-class Decoder(nn.Module):
+class CIFAR10Decoder(nn.Module):
     def __init__(self, in_channels=3, out_channels=16, latent_dim=200, img_len=32, act_fn=nn.ReLU()):
         super().__init__()
 
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.img_len = img_len
-        self.out_img_len = 8 if in_channels == 3 else 27 # CIFAR10 or UPENN_GBM
+        self.out_img_len = 8
 
         self.linear = nn.Sequential(
             nn.Linear(latent_dim, 4*out_channels*int(self.out_img_len**2)),
@@ -88,6 +88,11 @@ class Decoder(nn.Module):
             nn.ConvTranspose2d(out_channels, in_channels, self.in_channels, padding=1)
         )
 
+        print("Decoder:")
+        print(self.linear)
+        print(self.conv)
+        print()
+
     def forward(self, x):
         output = self.linear(x.float())
         output = output.view(-1, 4*self.out_channels, self.out_img_len, self.out_img_len)
@@ -95,7 +100,109 @@ class Decoder(nn.Module):
         return output
 
 #  defining autoencoder
-class Autoencoder(nn.Module):
+class CIFAR10Autoencoder(nn.Module):
+    def __init__(self, encoder, decoder):
+        super().__init__()
+        self.encoder = encoder
+        self.encoder.to(config.device)
+
+        self.decoder = decoder
+        self.decoder.to(config.device)
+
+    def forward(self, x):
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
+        return decoded
+
+class UPENNEncoder(nn.Module):
+    def __init__(self, in_channels=3, out_channels=16, latent_dim=200, img_len=32, act_fn=nn.ReLU()):
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.img_len = img_len
+        self.out_img_len = 27
+
+        self.net = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, self.in_channels, padding=1), # (32, 32)
+            act_fn,
+            nn.Conv2d(out_channels, out_channels, self.in_channels, padding=1), 
+            act_fn,
+            nn.Conv2d(out_channels, 2*out_channels, self.in_channels, padding=1, stride=2), # (16, 16)
+            act_fn,
+            nn.Conv2d(2*out_channels, 2*out_channels, self.in_channels, padding=1),
+            act_fn,
+            nn.Conv2d(2*out_channels, 4*out_channels, self.in_channels, padding=1, stride=2), # (8, 8)
+            act_fn,
+            nn.Conv2d(4*out_channels, 4*out_channels, self.in_channels, padding=1),
+            act_fn,
+            nn.Flatten(),
+            nn.Linear(4*out_channels*int(self.out_img_len**2), latent_dim*4),
+            act_fn,
+            nn.Linear(latent_dim*4, latent_dim*2),
+            act_fn,
+            nn.Linear(latent_dim*2, latent_dim),
+            act_fn
+        )
+
+        print("Encoder:")
+        print(self.net)
+        print()
+
+    def forward(self, x):
+        x = x.view(-1, self.in_channels, self.img_len, self.img_len)
+        output = self.net(x.float())
+        return output
+
+
+#  defining decoder
+class UPENNDecoder(nn.Module):
+    def __init__(self, in_channels=3, out_channels=16, latent_dim=200, img_len=32, act_fn=nn.ReLU()):
+        super().__init__()
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.img_len = img_len
+        self.out_img_len = 27
+
+        self.linear = nn.Sequential(
+            nn.Linear(latent_dim, latent_dim*2),
+            act_fn,
+            nn.Linear(latent_dim*2, latent_dim*4),
+            act_fn,
+            nn.Linear(latent_dim*4, 4*out_channels*int(self.out_img_len**2)),
+            act_fn
+        )
+
+        self.conv = nn.Sequential(
+            nn.ConvTranspose2d(4*out_channels, 4*out_channels, self.in_channels, padding=1), # (8, 8)
+            act_fn,
+            nn.ConvTranspose2d(4*out_channels, 2*out_channels, self.in_channels, padding=1, 
+                                stride=2, output_padding=1), # (16, 16)
+            act_fn,
+            nn.ConvTranspose2d(2*out_channels, 2*out_channels, self.in_channels, padding=1),
+            act_fn,
+            nn.ConvTranspose2d(2*out_channels, out_channels, self.in_channels, padding=1, 
+                                stride=2, output_padding=1), # (32, 32)
+            act_fn,
+            nn.ConvTranspose2d(out_channels, out_channels, self.in_channels, padding=1),
+            act_fn,
+            nn.ConvTranspose2d(out_channels, in_channels, self.in_channels, padding=1)
+        )
+
+        print("Decoder:")
+        print(self.linear)
+        print(self.conv)
+        print()
+
+    def forward(self, x):
+        output = self.linear(x.float())
+        output = output.view(-1, 4*self.out_channels, self.out_img_len, self.out_img_len)
+        output = self.conv(output)
+        return output
+
+#  defining autoencoder
+class UPENNAutoencoder(nn.Module):
     def __init__(self, encoder, decoder):
         super().__init__()
         self.encoder = encoder
@@ -234,126 +341,3 @@ class ConvolutionalAutoencoder():
     def decode(self, x):
         decoder = self.network.decoder
         return decoder(x)
-
-class AE_static(nn.Module):
-    """
-    Creates a simple linear MLP AutoEncoder.
-
-    `in_dim`: input and output dimension   
-    `bottleneck_dim`: dimension at bottleneck  
-    `width`: width of model   
-    `device`: which device to use   
-    """
-    def __init__(self, in_dim: int, sizes: list[int], device: str = 'cpu'):
-        super(AE_static, self).__init__()
-        # Class variables
-        self.in_dim = in_dim
-        self.sizes = sizes
-        self.out_dim = in_dim
-        self.device = device
-
-        # Model layer sizes
-        print("Creating model with layers:")
-        print(sizes)
-        print()
-
-        # Define model layers
-        self.layers = []
-        for idx in range(len(sizes)-1):
-            self.layers.append(nn.Linear(sizes[idx], sizes[idx+1]))
-            if idx != (len(sizes)-2):
-                self.layers.append(nn.ReLU())
-
-        model = nn.Sequential(*self.layers)
-        model = model.to(device)
-        self.model = model
-
-    def forward(self, x):
-        out = self.model(x)
-        return out
-
-class AE(nn.Module):
-    """
-    Creates a simple linear MLP AutoEncoder.
-
-    `in_dim`: input and output dimension   
-    `bottleneck_dim`: dimension at bottleneck  
-    `width`: width of model   
-    `device`: which device to use   
-    """
-    def __init__(self, in_dim: int, bottleneck_dim: int, depth: int, device: str = 'cpu'):
-        super(AE, self).__init__()
-        # Class variables
-        self.in_dim = in_dim
-        self.bottleneck_dim = bottleneck_dim
-        self.depth = depth
-        self.out_dim = in_dim
-        self.device = device
-
-        # Model layer sizes
-        sizes = list()
-        if depth == 2:
-            sizes.extend([in_dim, in_dim])
-        elif depth % 2 == 0:
-            sizes.extend(np.linspace(in_dim, bottleneck_dim, depth//2, dtype=int).tolist())
-            sizes.extend(np.linspace(bottleneck_dim, in_dim, depth//2, dtype=int).tolist())
-        else:
-            sizes.extend(np.linspace(in_dim, bottleneck_dim, depth//2+1, dtype=int).tolist())
-            sizes.extend(np.linspace(bottleneck_dim, in_dim, depth//2+1, dtype=int).tolist()[1:])
-
-
-        print("Creating model with layers:")
-        print(sizes)
-        print()
-
-        # Define model layers
-        self.layers = []
-        for idx in range(len(sizes)-1):
-            self.layers.append(nn.Linear(sizes[idx], sizes[idx+1]))
-            if idx != (len(sizes)-2):
-                self.layers.append(nn.ReLU())
-
-        model = nn.Sequential(*self.layers)
-        model = model.to(device)
-        self.model = model
-
-    def forward(self, x):
-        out = self.model(x)
-        return out
-
-
-class MLP(nn.Module):
-    """
-    Creates a simple linear MLP.
-
-    `in_dim`: input dimension   
-    `width`: width of model   
-    `depth`: depth of model   
-    `out_dim`: output dimension   
-    `device`: which device to use   
-    """
-    def __init__(self, in_dim: int, width: int, depth: int, out_dim: int, device: str = 'cpu'):
-        super(MLP, self).__init__()
-        # Class variables
-        self.in_dim = in_dim
-        self.width = width
-        self.depth = depth
-        self.out_dim = out_dim
-        self.device = device
-
-        # Define model layers
-        self.layers = []
-        self.layers.append(nn.Linear(in_dim, width))
-        self.layers.append(nn.ReLU())
-        for _ in range(depth - 2): 
-            self.layers.append(nn.Linear(width, width))
-            self.layers.append(nn.ReLU())
-        self.layers.extend([nn.Linear(width, out_dim)])
-
-        model = nn.Sequential(*self.layers)
-        model = model.to(device)
-        self.model = model
-
-    def forward(self, x):
-        out = self.model(x)
-        return out

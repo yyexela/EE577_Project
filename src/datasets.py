@@ -501,7 +501,7 @@ def get_dataset(dataset: Literal['MNIST', 'FMNIST', 'YaleFaces', 'CelebA',  'CIF
     return X, None, shape
 
 #  defining dataset class
-class CustomCIFAR10(Dataset):
+class CustomDataset(Dataset):
     def __init__(self, data, transforms=None):
         self.data = data
         self.transforms = transforms
