@@ -356,6 +356,8 @@ class UPENN_GBM_MLPs(nn.Module):
         for mlp in self.modality_mlps:
             mlp.to(config.device)
         self.combined_mlp.to(config.device)
+        
+        self.sm = torch.nn.Softmax(dim=1)
 
     def forward(self, x):
         x_outs = list()
@@ -364,6 +366,7 @@ class UPENN_GBM_MLPs(nn.Module):
         x_outs = torch.cat(x_outs,dim=1)
         x_outs = x_outs.reshape(x.shape[0],-1)
         output = self.combined_mlp(x_outs)
+        output = self.sm(output)
         return output
 
 class UPENN_GBM_Model():
@@ -381,6 +384,8 @@ class UPENN_GBM_Model():
         log_dict = {
             'training_loss_per_batch': [],
             'validation_loss_per_batch': [],
+            'training_acc_per_batch': [],
+            'validation_acc_per_batch': [],
             'visualizations': []
         } 
 
@@ -425,10 +430,16 @@ class UPENN_GBM_Model():
                 #  optimizing weights
                 self.optimizer.step()
 
+                #  compute accuracy
+                max_idx = output.argmax(dim=1)
+                label_idx = labels.argmax(dim=1)
+                acc = ((label_idx == max_idx).int().sum()/images.shape[0]).item()
+
                 #--------------
                 # LOGGING
                 #--------------
                 log_dict['training_loss_per_batch'].append(loss.item())
+                log_dict['training_acc_per_batch'].append(acc)
 
             #--------------
             # VALIDATION
@@ -443,10 +454,16 @@ class UPENN_GBM_Model():
                     #  computing validation loss
                     val_loss = loss_function(val_output, val_labels)
 
+                    #  compute accuracy
+                    val_max_idx = val_output.argmax(dim=1)
+                    val_label_idx = val_labels.argmax(dim=1)
+                    val_acc = ((val_label_idx == val_max_idx).int().sum()/val_images.shape[0]).item()
+
                 #--------------
                 # LOGGING
                 #--------------
                 log_dict['validation_loss_per_batch'].append(val_loss.item())
+                log_dict['validation_acc_per_batch'].append(val_acc)
 
         return log_dict
 

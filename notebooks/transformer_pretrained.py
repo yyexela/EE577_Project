@@ -53,13 +53,18 @@ validation_data = datasets.CustomLabeledDataset(validation_data, validation_labe
 #  training model
 model = models.UPENN_GBM_Model(models.UPENN_GBM_MLPs(), lr=1e-5)
 
-log_dict = model.train(nn.CrossEntropyLoss(), epochs=10000, batch_size=468, 
+log_dict = model.train(nn.CrossEntropyLoss(), epochs=250, batch_size=468, 
     training_set=training_data, validation_set=validation_data)
 
 train_loss = np.asarray(log_dict['training_loss_per_batch'])
 val_loss = np.asarray(log_dict['validation_loss_per_batch'])
+train_acc = np.asarray(log_dict['training_acc_per_batch'])
+val_acc = np.asarray(log_dict['validation_acc_per_batch'])
 num_batches = train_loss.shape[0]
 
 plot_data.plot_line(np.arange(num_batches), train_loss, "train loss", 'Training loss per batch', 'batch number', 'training loss', save=True, fname="train_loss")
 plot_data.plot_line(np.arange(num_batches), val_loss, "validation loss", 'validation loss per batch', 'batch number', 'validation loss', save=True, fname="val_loss")
+
+plot_data.plot_line(np.arange(num_batches), train_acc, "train acc", 'Training accuracy per batch', 'batch number', 'training accuracy', save=True, fname="train_acc")
+plot_data.plot_line(np.arange(num_batches), val_acc, "validation acc", 'validation accuracy per batch', 'batch number', 'validation accuracy', save=True, fname="val_acc")
 
