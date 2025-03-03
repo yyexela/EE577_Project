@@ -183,7 +183,7 @@ def split_image_v2(patients, seed=42):
     
     # Separate into train and test datasets.
     # train_test_split automatically shuffles and splits the data following predefined sizes can revisit if shuffling is not a good idea
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.0, random_state=seed, stratify=y)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=seed, stratify=y)
     
     return  X_train, y_train, X_test, y_test
 

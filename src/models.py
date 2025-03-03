@@ -123,6 +123,21 @@ class UPENNEncoder(nn.Module):
         self.img_len = img_len
         self.out_img_len = 27
 
+        self.net_1 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, self.in_channels, padding=1), # (32, 32)
+            act_fn,
+            nn.Conv2d(out_channels, out_channels, self.in_channels, padding=1), 
+            act_fn,
+            nn.Conv2d(out_channels, 2*out_channels, self.in_channels, padding=1, stride=2), # (16, 16)
+            act_fn,
+            nn.Conv2d(2*out_channels, 2*out_channels, self.in_channels, padding=1),
+            act_fn,
+            nn.Conv2d(2*out_channels, 4*out_channels, self.in_channels, padding=1, stride=2), # (8, 8)
+            act_fn,
+            nn.Conv2d(4*out_channels, 4*out_channels, self.in_channels, padding=1),
+            act_fn,
+        )
+
         self.net = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, self.in_channels, padding=1), # (32, 32)
             act_fn,
@@ -137,7 +152,7 @@ class UPENNEncoder(nn.Module):
             nn.Conv2d(4*out_channels, 4*out_channels, self.in_channels, padding=1),
             act_fn,
             nn.Flatten(),
-            nn.Linear(4*out_channels*int(self.out_img_len**2), latent_dim*4),
+            nn.Linear(139392, latent_dim*4),
             act_fn,
             nn.Linear(latent_dim*4, latent_dim*2),
             act_fn,
@@ -163,14 +178,14 @@ class UPENNDecoder(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.img_len = img_len
-        self.out_img_len = 27
+        self.out_img_len = 66
 
         self.linear = nn.Sequential(
             nn.Linear(latent_dim, latent_dim*2),
             act_fn,
             nn.Linear(latent_dim*2, latent_dim*4),
             act_fn,
-            nn.Linear(latent_dim*4, 4*out_channels*int(self.out_img_len**2)),
+            nn.Linear(latent_dim*4, 139392),
             act_fn
         )
 
@@ -178,7 +193,7 @@ class UPENNDecoder(nn.Module):
             nn.ConvTranspose2d(4*out_channels, 4*out_channels, self.in_channels, padding=1), # (8, 8)
             act_fn,
             nn.ConvTranspose2d(4*out_channels, 2*out_channels, self.in_channels, padding=1, 
-                                stride=2, output_padding=1), # (16, 16)
+                                stride=2, output_padding=0), # (16, 16)
             act_fn,
             nn.ConvTranspose2d(2*out_channels, 2*out_channels, self.in_channels, padding=1),
             act_fn,
