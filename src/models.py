@@ -11,6 +11,12 @@ from torchvision.utils import make_grid
 from torch.utils.data import DataLoader
 import src.global_config as global_config
 import os
+import torch
+from transformers import AutoImageProcessor, AutoModel
+from PIL import Image
+import requests
+from transformers import Dinov2Config, Dinov2Model
+
 
 # Load config
 config = global_config.config
@@ -383,6 +389,141 @@ class UPENN_GBM_MLPs(nn.Module):
         output = self.combined_mlp(x_outs)
         output = self.sm(output)
         return output
+
+class UPENN_GBM_ViT(nn.Module):
+    def __init__(self, in_channels = 768, n_modalities = 4, out_bins = 7):
+        super().__init__()
+        # ViT
+        self.configuration = Dinov2Config()
+        self.configuration.num_channels = 5
+        self.configuration.image_size = 240
+        self.configuration.patch_size = 15
+        self.configuration.num_hidden_layers = 4
+        self.vit = Dinov2Model(self.configuration)
+        self.processor = AutoImageProcessor.from_pretrained('facebook/dinov2-base')
+
+        # MLP head
+        self.n_modalities = n_modalities
+
+        self.combined_mlp = MLP(in_channels, in_channels//4, 3, out_bins, device = config.device)
+        self.combined_mlp.to(config.device)
+        
+        self.sm = torch.nn.Softmax(dim=1)
+
+    def forward(self, x):
+        x_outs = self.vit(x).last_hidden_state[:,0,:]
+        output = self.combined_mlp(x_outs)
+        output = self.sm(output)
+        return output
+
+class UPENN_GBM_Model_Scratch():
+    def __init__(self, ViT_model, in_channels = 768, n_modalities = 4, lr=1e-4):
+        self.network = ViT_model
+        self.n_modalities = n_modalities
+        self.lr = lr
+        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.lr)
+        self.in_channels = in_channels
+
+    def train(self, loss_function, epochs, batch_size, 
+            training_set, validation_set):
+    
+        #  creating log
+        log_dict = {
+            'training_loss_per_batch': [],
+            'validation_loss_per_batch': [],
+            'training_acc_per_batch': [],
+            'validation_acc_per_batch': [],
+            'visualizations': []
+        } 
+
+        #  defining weight initialization function
+        def init_weights(module):
+            if isinstance(module, nn.Conv2d):
+                torch.nn.init.xavier_uniform_(module.weight)
+                module.bias.data.fill_(0.01)
+            elif isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                module.bias.data.fill_(0.01)
+
+        #  initializing network weights
+        self.network.apply(init_weights)
+
+        #  creating dataloaders
+        train_loader = DataLoader(training_set, batch_size)
+        val_loader = DataLoader(validation_set, batch_size)
+
+        #  setting convnet to training mode
+        self.network.train()
+        self.network.to(config.device)
+
+        for epoch in tqdm(range(epochs)):
+            train_losses = []
+
+            #------------
+            #  TRAINING
+            #------------
+            for _, (images, labels) in enumerate(train_loader):
+                #  zeroing gradients
+                self.optimizer.zero_grad()
+                #  sending images to device
+                images = images.to(config.device).float()
+                labels = labels.to(config.device).float()
+                #  reconstructing images
+                output = self.network(images)
+                #  computing loss
+                loss = loss_function(output, labels)
+                #  calculating gradients
+                loss.backward()
+                #  optimizing weights
+                self.optimizer.step()
+
+                #  compute accuracy
+                max_idx = output.argmax(dim=1)
+                label_idx = labels.argmax(dim=1)
+                acc = ((label_idx == max_idx).int().sum()/images.shape[0]).item()
+
+                #--------------
+                # LOGGING
+                #--------------
+                log_dict['training_loss_per_batch'].append(loss.item())
+                log_dict['training_acc_per_batch'].append(acc)
+
+            #--------------
+            # VALIDATION
+            #--------------
+            for _, (val_images, val_labels) in enumerate(val_loader):
+                with torch.no_grad():
+                    #  sending validation images to device
+                    val_images = val_images.to(config.device).float()
+                    val_labels = val_labels.to(config.device).float()
+                    #  reconstructing images
+                    val_output = self.network(val_images)
+                    #  computing validation loss
+                    val_loss = loss_function(val_output, val_labels)
+
+                    #  compute accuracy
+                    val_max_idx = val_output.argmax(dim=1)
+                    val_label_idx = val_labels.argmax(dim=1)
+                    val_acc = ((val_label_idx == val_max_idx).int().sum()/val_images.shape[0]).item()
+
+                #--------------
+                # LOGGING
+                #--------------
+                log_dict['validation_loss_per_batch'].append(val_loss.item())
+                log_dict['validation_acc_per_batch'].append(val_acc)
+
+        return log_dict
+
+    def autoencode(self, x):
+        return self.network(x)
+
+    def encode(self, x):
+        encoder = self.network.encoder
+        return encoder(x)
+    
+    def decode(self, x):
+        decoder = self.network.decoder
+        return decoder(x)
 
 class UPENN_GBM_Model():
     def __init__(self, MLP_model, in_channels = 768, n_modalities = 4, lr=1e-4):
