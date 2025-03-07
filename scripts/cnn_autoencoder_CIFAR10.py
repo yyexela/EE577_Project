@@ -25,7 +25,6 @@ if torch.cuda.is_available():
 else:
     print(f'Running on {config.device}')
 
-
 # Params for loading data
 gen_params = {
         'data_dir': config.upenn_out_dir,
@@ -78,6 +77,7 @@ model = models.ConvolutionalAutoencoder(models.UPENNAutoencoder(
 
 log_dict = model.train(nn.MSELoss(), epochs=20, batch_size=128, 
     training_set=training_data, validation_set=validation_data, test_set=test_data)
+
 
 train_loss = np.asarray(log_dict['training_loss_per_batch'])
 val_loss = np.asarray(log_dict['validation_loss_per_batch'])
