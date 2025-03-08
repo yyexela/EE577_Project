@@ -23,6 +23,8 @@ from sklearn.model_selection import train_test_split
 from skimage.transform import rescale
 from skimage.util import random_noise
 from skimage.transform import rotate
+import random
+
 
 # Load config
 config = global_config.config
@@ -172,6 +174,7 @@ def retrieve_data(modality='T1'):
     t1_comb_mgmt_df.drop(feature_column_names, axis=1, inplace=True)
 
     return t1_mgmt_df, t1_man_mgmt_df, t1_comb_mgmt_df
+
 
 def split_image_v2(patients, seed=42):
     """
@@ -412,10 +415,8 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
 
         if not struct_checked:
                 print(f"Checking struct for patient {pat}, augmentation {aug}:")
-                print(struct)
                 struct_checked = True
 
-        # Tumor box calculation, if needed
         if aug_idx + mod_idx == 0:
             flipped_mask = np.flip(np.flip(np.flip(mask, 0), 1), 2)
             tumor_box = ([int(np.min(helpers.first_nonzero(mask, 0, np.inf))),
@@ -481,6 +482,7 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
     # Initialize tumor_boxes list
     tumor_boxes = []
 
+    image_containter=OrderedDict() 
     for pat, row in pbar:
         mod_arr = OrderedDict()  # Initialize an ordered dict for each patient
         for aug_idx, aug in enumerate(augments):
@@ -502,16 +504,20 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
                 for mod_idx, mod in enumerate(dti_mod_name):
                     path_names = 'dti_image_paths'  # Set the path names for DTI modalities
                     full_arr, struct, success_flag, tumor_boxes = get_images(mod_idx, mod, aug_idx, aug, path_names, row, tumor_boxes,mod_arr)
-                    mod_arr[mod] = full_arr
+                    if full_arr is not None:
+                        mod_arr[mod] = full_arr
+                    else:
+                        print(f"Skipping image for modality {mod} due to empty full_arr")
                     if not success_flag:
                         continue
 
+        image_containter[pat]=mod_arr
 
     # After the loop finishes, you can access tumor_boxes to process them further or save them
     print(f"Total tumor boxes collected: {len(tumor_boxes)}")
 
     print(structural_dir)
-    print()
+    
     if not tumor_boxes:
         print("No tumor boxes found.")
     else:
@@ -520,6 +526,7 @@ def convert_image_data_mod(modality=['T2', 'FLAIR', 'T1', 'T1GD'], image_type='a
         df = pd.DataFrame(flattened_data)
         df.columns = ["X min", "X max", "Y min", "Y max", "Z min", "Z max"]
         df.index = list(paths_df.index)[0:df.shape[0]]
+        df.to_csv('tumor_boxes.csv', index=True)
         print(df.describe())
 
-    return paths_df
+    return paths_df, image_containter,tumor_boxes
