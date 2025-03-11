@@ -5,6 +5,7 @@ import numpy as np
 import torch.nn as nn
 from pathlib import Path
 import torchvision.datasets as Datasets
+import torchvision.transforms as T
 import pandas as pd
 import pickle
 import tensorflow as tf
@@ -24,31 +25,36 @@ import numpy as np
 from skimage.transform import rotate
 from skimage.util import random_noise
 import torch.nn.functional as F
+import torch.nn as nn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchmetrics import MeanSquaredError, R2Score 
 from skimage import measure 
 from torch.utils.data import DataLoader
 from torch.nn.utils import clip_grad_norm_
+from skimage import measure
+import csv
 
 
 pkg_path = str(Path(os.path.abspath('')).parent.absolute())
 sys.path.insert(0, pkg_path)
 
 data_path=pkg_path+'/results/'
+checkpoint_path='/home/ee577/project/Checkpoints' 
 
 from src import *
 
 # Load config file
-config = global_config.config
-device = torch.device(config.device) 
+# config = global_config.config
+# device = torch.device(config.device) 
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Currently running on this device {device}")
+
 direct_pairs='/home/ee577/project/results/DTI_AD_NC_paired_data.pkl'
 
 with open(direct_pairs, 'rb') as f:
     X, y = pickle.load(f)
 
-import numpy as np
-import torch
-from skimage import measure
 
 def create_segmentation_mask(image, threshold=0.1):
     """
@@ -81,8 +87,6 @@ for i in range(X.shape[0]):
 
 segmentation_masks = np.stack(segmentation_masks)
 
-
-
 # Ensure X and segmentation_masks are combined and split together
 X_train, X_temp, segmentation_masks_train, segmentation_masks_temp, y_train, y_temp = train_test_split(
     X, segmentation_masks, y, test_size=0.2, random_state=1)
@@ -98,46 +102,58 @@ y_val = scaler.transform(y_val)
 y_test = scaler.transform(y_test)
 
 
-def random_flip(image):
+def random_flip_rotate(image, mask, epoch):
     """
-    Randomly flips the image horizontally or vertically.
+    Randomly flips and rotates the image and mask.
     
     Args:
     - image (numpy.ndarray or torch.Tensor): Input image, can be a numpy array or torch tensor.
+    - mask (numpy.ndarray or torch.Tensor): Mask corresponding to the image.
+    - epoch (int): Epoch number, used to set the random seed.
+    - device (str): Device to move the image and mask to (default is 'cuda').
     
     Returns:
-    - torch.Tensor: Randomly flipped image.
+    - torch.Tensor: Transformed image and mask.
     """
+    # Set the random seed using the epoch
+    random.seed(epoch)
+    torch.manual_seed(epoch)
+    
     if isinstance(image, np.ndarray):
-        image = torch.tensor(image)
+        image = torch.tensor(image).to(device)
+        mask = torch.tensor(mask).to(device)
     
     if image.dim() == 3:
         image = image.unsqueeze(0)
+        mask = mask.unsqueeze(0)
     
     # (batch_size, channels, height, width)
     if image.dim() == 4:
         # Flip horizontally (along the width axis)
         if random.random() < 0.5:
-            image = image.flip(3)  
+            image = image.flip(3).to(device) 
+            mask = mask.flip(3).to(device)
         
-        # Flip vertically (along the height axis)
-        if random.random() < 0.5:
-            image = image.flip(2)  
+        # Rotate image (no change in vertical direction)
+        angle = random.choice([0,180])  
+        rotate_transform = T.Compose([
+            T.RandomRotation(degrees=(0, 0), expand=False, center=None)  # Keeps vertical intact
+        ])
+        
+        # Apply rotation for both image and mask
+        image = torch.rot90(image, k=random.choice([0, 1, 2, 3]), dims=(2, 3)).to(device)  # Rotate in the horizontal axis
+        mask = torch.rot90(mask, k=random.choice([0, 1, 2, 3]), dims=(2, 3)).to(device)   # Rotate in the horizontal axis
+        
     else:
         raise ValueError(f"Expected image to have 3 or 4 dimensions, but got {image.dim()} dimensions.")
     
-    # If we added a batch dimension earlier (for single image), remove it now
+    # Remove the batch dimension if it was added earlier
     if image.dim() == 4:
         image = image.squeeze(0)
+        mask = mask.squeeze(0)
     
-    return image
+    return image, mask 
 
-def add_random_noise(image, noise_factor=0.05):
-    """
-    Adds random noise to the image.
-    """
-    noise = np.random.normal(0, noise_factor, image.shape)
-    return image + noise
 class CustomDataset(Dataset):
     def __init__(self, images, labels, masks=None, transform=None):
         """
@@ -167,9 +183,9 @@ class CustomDataset(Dataset):
 
         # Convert to torch tensor if necessary
         if isinstance(image, np.ndarray):
-            image = torch.tensor(image, dtype=torch.float32)
+            image = torch.tensor(image, dtype=torch.float32).to(device)
 
-        label = torch.tensor(label, dtype=torch.float32)
+        label = torch.tensor(label, dtype=torch.float32).to(device)
 
         # If the image is 3D (D, H, W), add channel dimension (1, D, H, W)
         if image.ndimension() == 3:  # (D, H, W)
@@ -182,16 +198,20 @@ class CustomDataset(Dataset):
         # Return the image, label, and mask (if available)
         if mask is not None:
             if isinstance(mask, np.ndarray):
-                mask = torch.tensor(mask, dtype=torch.float32)
+                mask = torch.tensor(mask, dtype=torch.float32).to(device)
                 if mask.ndimension() == 3:  # (D, H, W)
                     mask = mask.unsqueeze(0)
                 return {'image': image, 'label': label, 'mask': mask}
         else:
             return {'image': image, 'label': label}
+
+
+
 class UNet3DRegression(nn.Module):
-    def __init__(self, in_channels, out_channels, weights,segmentation_weight=0.8, l1_lambda=1e-10):
+    def __init__(self, in_channels, out_channels, weights, segmentation_weight=0.8, l1_lambda=1e-10, device=device):
         super(UNet3DRegression, self).__init__()
 
+        self.device = device  # Set the device for the model
         # Initialize UNet with 3D structure
         self.unet = UNet(
             spatial_dims=3,
@@ -205,21 +225,28 @@ class UNet3DRegression(nn.Module):
             act='PReLU',
             norm='INSTANCE',
             dropout=0.1,
-        )
+        ).to(device)  # Move UNet to the device
 
         # Initialize regression layer as None initially
-        self.regression_layer = nn.Identity()
-        sum_weights=sum(weights)
-        self.weights = weights/sum_weights
-        self.dropout = nn.Dropout3d(p=0.3)
-        self.l1_lambda = l1_lambda
-        self.segmentation_weight=segmentation_weight
-        self.segmentation_head = nn.Conv3d(out_channels, 1, kernel_size=1)
+        self.regression_layer = nn.Identity().to(device)
+        
+        # Normalize and move weights to the correct device
+        sum_weights = sum(weights)
+        self.weights = (weights / sum_weights).to(device)
+
+        # Initialize dropout and move it to device
+        self.dropout = nn.Dropout3d(p=0.3).to(device)
+
+        # Initialize segmentation weight and move it to device
+        self.segmentation_weight = torch.tensor(segmentation_weight).to(device)  # Ensure segmentation weight is a tensor
+        self.segmentation_head = nn.Conv3d(out_channels, 1, kernel_size=1).to(device)  # Move segmentation head to device
+
+        self.l1_lambda = l1_lambda  # L1 regularization lambda
 
     def forward(self, x):
         if x.ndimension() == 4:  # Shape: (channels, depth, height, width)
-            x = x.unsqueeze(0)
-        
+            x = x.unsqueeze(0).to(self.device)  # Move input to device
+
         _, _, depth, height, width = x.size()
         if depth % 16 != 0 or height % 16 != 0 or width % 16 != 0:
             new_depth = (depth // 16 + 1) * 16
@@ -227,40 +254,36 @@ class UNet3DRegression(nn.Module):
             new_width = (width // 16 + 1) * 16
             x = F.interpolate(x, size=(new_depth, new_height, new_width), mode='trilinear', align_corners=True)
 
-        x = self.unet(x)
-        x = self.dropout(x)
-        segmentation_output = self.segmentation_head(x)
+        x = self.unet(x)  # Forward pass through UNet
+        x = self.dropout(x)  # Apply dropout
+        segmentation_output = self.segmentation_head(x)  # Get segmentation output
+        segmentation_output = segmentation_output.to(self.device)  # Ensure output is on the correct device
 
         # Apply global average pooling to reduce the spatial dimensions
-        # The output shape will be (batch_size, channels, 1, 1, 1)
         x = F.adaptive_avg_pool3d(x, (1, 1, 1))  # Global average pooling
         x = x.view(x.size(0), -1)  # Flatten to [batch_size, channels]
 
         # Initialize regression_layer with the correct output size dynamically during the forward pass
         if isinstance(self.regression_layer, nn.Identity):
-            self.regression_layer = nn.Linear(x.size(1), 55)  # Adjust output to 55
+            self.regression_layer = nn.Linear(x.size(1), 55).to(self.device)  # Adjust output to 55 and move to device
 
         regression_output = self.regression_layer(x)  # Apply regression layer (55 output features)
+        regression_output = regression_output.to(self.device)  # Ensure output is on the correct device
 
-        # print(f"Regression tensor size: {regression_output.size()}")
         return {'segmentation_output': segmentation_output, 'regression_output': regression_output}
-    
+
     def weighted_mse_loss(self, segmentation_output, regression_output, target_segmentation, target_regression):
-        """
-        Combines the segmentation loss and regression loss into a single loss function.
-        Args:
-            segmentation_output (Tensor): The output of the model for segmentation.
-            regression_output (Tensor): The output of the model for regression.
-            target_segmentation (Tensor): The ground truth segmentation.
-            target_regression (Tensor): The ground truth regression labels.
-        """
-        
+        # Ensure all targets are on the same device as the model outputs
+        target_segmentation = target_segmentation.to(self.device)
+        target_regression = target_regression.to(self.device)
+
         # Resize the segmentation output to match the size of the target segmentation
         target_size = target_segmentation.shape[2:]  # [74, 98, 86]
         segmentation_output = F.interpolate(segmentation_output, size=target_size, mode='trilinear', align_corners=False)
+
         # Calculate the binary cross-entropy loss for segmentation
         segmentation_loss = F.binary_cross_entropy_with_logits(segmentation_output, target_segmentation)
-        
+
         # Ensure the regression output and target regression have the same shape
         assert regression_output.size(1) == target_regression.size(1), \
             f"Regression output size {regression_output.size(1)} does not match target size {target_regression.size(1)}"
@@ -283,17 +306,34 @@ class UNet3DRegression(nn.Module):
             l1_norm += torch.sum(torch.abs(param))
         return self.l1_lambda * l1_norm  # L1 penalty term scaled by lambda
 
-def save_checkpoint(model, optimizer, epoch, loss,batch=-1, val_loss=None, path='/home/ee577/project/results/checkpoint.pth'):
+def save_checkpoint(model, optimizer, epoch, loss, batch=-1, val_loss=None, path='/home/ee577/project/results/checkpoint.pth', csv_path='/home/ee577/project/results/checkpoints.csv'):
+    # Save checkpoint to the .pth file
     checkpoint = {
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'train_loss': loss,
         'val_loss': val_loss,
-        'batch':batch,
+        'batch': batch,
     }
+    
     torch.save(checkpoint, path)
     print(f"Checkpoint saved to {path}")
+
+    # Check if the CSV file exists
+    if not os.path.isfile(csv_path):
+        # If it doesn't exist, create the file and write the header
+        with open(csv_path, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(['epoch', 'batch', 'train_loss', 'val_loss'])  # Add header row
+        print(f"CSV file created at {csv_path}")
+
+    # Append new data to the CSV file
+    with open(csv_path, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow([epoch, batch, loss, val_loss])  # Append data
+    print(f"Checkpoint data saved to CSV at {csv_path}")
+
 def train_model(
         model, 
         train_loader, 
@@ -304,7 +344,8 @@ def train_model(
         patience=10, 
         eval_every=2,  
         seeds=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        max_grad_norm = 5.0
+        max_grad_norm = 5.0,
+        last_epoch=None
         ):
     model.to(device)
     model.train()
@@ -312,13 +353,17 @@ def train_model(
     best_val_loss = float('inf')  # Initialize with a large number
     batches_since_improvement = 0  # Count how many epochs since last improvement
     val_losses = []  # List to store the validation losses
+    path = f'/home/ee577/project/results/DTI_feat_checkpoint.pth'
+    if last_epoch:
+        epoch_range=range(last_epoch, num_epochs)
+    else:
+        epoch_range=range(num_epochs)
 
-    for epoch in range(num_epochs):
+    for epoch in epoch_range:
         seed = seeds[epoch % len(seeds)]  # Cycle through the seeds if num_epochs > len(seeds)
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        running_loss = 0.0
+        random.seed(epoch)
+        np.random.seed(epoch)
+        torch.manual_seed(epoch)
 
         # Iterate over batches in the train_loader
         for batch_idx, batch in enumerate(train_loader):
@@ -336,14 +381,10 @@ def train_model(
                 image = inputs[i].cpu().numpy()
                 mask = segmentation_masks[i].cpu().numpy()
                 if random.random() < 0.5:
-                    image = random_flip(image)
-                    mask=random_flip(mask)
-                if random.random() < 0.5:
-                    image = add_random_noise(image)
-                    
+                    image, mask = random_flip_rotate(image, mask, epoch)        
                 # Ensure image is 4D (1, D, H, W)
-                image = torch.tensor(image, dtype=torch.float32)
-                mask = torch.tensor(mask, dtype=torch.float32)
+                image = torch.tensor(image, dtype=torch.float32).to(device)
+                mask = torch.tensor(mask, dtype=torch.float32).to(device)
                 if image.ndimension() == 3:  # (D, H, W) -> Add channel dimension
                     image = image.unsqueeze(0)  # Now it becomes (1, D, H, W)
                     mask = mask.unsqueeze(0)
@@ -369,7 +410,6 @@ def train_model(
             total_loss = train_loss + l1_loss
             total_loss.backward()
             clip_grad_norm_(model.parameters(), max_grad_norm)
-            
             optimizer.step()
 
             # Average loss for this epoch
@@ -377,13 +417,13 @@ def train_model(
             train_loss = train_loss.item()
             val_loss = evaluate_validation_loss(model, val_loader) # model in eval mode
             print(f"Epoch {epoch + 1}/{num_epochs}, Seed {seed}, Loss: {train_loss:.4f}, Val_loss {val_loss}, Batch: {batch_idx}")
-            path = f'/home/ee577/project/results/DTI_feat_{epoch}.pth'
-            save_checkpoint(model, optimizer, epoch='latest', loss=train_loss,val_loss =val_loss, batch=batch_idx, path=path)
+            
             model.train() # re-enabled gradients
             # Perform validation every `eval_every` epochs
             if (batch_idx + 1) % eval_every == 0:
                 scheduler.step(val_loss)
                 val_losses.append(val_loss)  # Save the validation loss
+                save_checkpoint(model, optimizer, epoch='latest', loss=train_loss,val_loss =val_loss, batch=batch_idx, path=path)
                 # Early stopping: Check if validation loss has improved
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
@@ -427,9 +467,11 @@ def evaluate_validation_loss(model, val_loader):
     avg_val_loss = val_loss / total_samples
     return avg_val_loss
 
-train_loader = DataLoader(CustomDataset(X_train, y_train, masks=segmentation_masks_train), batch_size=32, shuffle=True)
-val_loader = DataLoader(CustomDataset(X_val, y_val, masks=segmentation_masks_val), batch_size=32, shuffle=False)
-test_loader = DataLoader(CustomDataset(X_test, y_test, masks=segmentation_masks_test), batch_size=32, shuffle=False)
+batch_size=16
+
+train_loader = DataLoader(CustomDataset(X_train, y_train, masks=segmentation_masks_train), batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(CustomDataset(X_val, y_val, masks=segmentation_masks_val), batch_size=batch_size, shuffle=False)
+test_loader = DataLoader(CustomDataset(X_test, y_test, masks=segmentation_masks_test), batch_size=batch_size, shuffle=False)
 
 # Example of how you can iterate through the dataset
 for batch in train_loader:
@@ -437,20 +479,16 @@ for batch in train_loader:
     labels = batch['label']
     masks = batch['mask']
     
-    # Do something with images, labels, and masks...
-    print(images.shape, labels.shape, masks.shape if masks is not None else "No Mask")
+
 
 # used to weight the loss values
 shapley_df = pd.read_csv(data_path + 'shap_DTI_AD_NC_.csv')
 shapley_df = shapley_df[shapley_df['Summed_Shapy_Values'] >= 200]
-print(f"Original shape: {shapley_df.shape}") 
 new_values = [200, 200, 200, 400, 400]
 new_values_df = pd.DataFrame(new_values, columns=['Summed_Shapy_Values'])
 shapley_df = pd.concat([shapley_df, new_values_df], ignore_index=True)
 shapley_df=shapley_df['Summed_Shapy_Values'].values
-print(f"Updated shape: {shapley_df.shape}")
 shapley_values = np.array(shapley_df).reshape(-1, 1) 
-print(f"Updated shape: {shapley_values.shape}")
 scaler = MinMaxScaler()
 shapley_values_scaled = scaler.fit_transform(shapley_values)
 shapley_values_scaled_tensor = torch.tensor(shapley_values_scaled, dtype=torch.float32)
@@ -461,7 +499,7 @@ out_shape=y_train.shape[1:][0]
 model = UNet3DRegression(in_channels=1, out_channels=out_shape, weights=shapley_values_scaled_tensor)
 
 optimizer = Adam([
-    {'params': model.unet.parameters(), 'weight_decay': 1e-10},  # Less regularization on U-net layers
+    {'params': model.unet.parameters(), 'weight_decay': 1e-11},  # Less regularization on U-net layers
     {'params': model.regression_layer.parameters(), 'weight_decay': 1e-9},  # L2 regularization for regression layer
 ], lr=1e-7)
 # Learning Rate Scheduler (Reduce learning rate when validation loss plateaus)
