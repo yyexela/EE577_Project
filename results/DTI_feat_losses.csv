@@ -1,0 +1,8 @@
+epoch,train_loss,val_loss,checkpoint_path
+1.0,0.29530373215675354,1.2519843578338623,/home/ee577/project/results/DTI_feat_1.pth
+3.0,0.21499504148960114,1.1966220140457153,/home/ee577/project/results/DTI_feat_3.pth
+5.0,0.4025978446006775,1.2058428525924683,/home/ee577/project/results/DTI_feat_5.pth
+7.0,0.34831202030181885,1.2062550783157349,/home/ee577/project/results/DTI_feat_7.pth
+9.0,0.2506956160068512,1.21061110496521,/home/ee577/project/results/DTI_feat_9.pth
+11.0,0.14997819066047668,1.2256321907043457,/home/ee577/project/results/DTI_feat_11.pth
+13.0,0.15401069819927216,1.2138713598251343,/home/ee577/project/results/DTI_feat_13.pth
