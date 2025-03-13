@@ -33,12 +33,15 @@ from torch.utils.data import DataLoader
 from torch.nn.utils import clip_grad_norm_
 from skimage import measure
 import csv
+import logging
+logging.basicConfig(level=logging.INFO)
 
 
 pkg_path = str(Path(os.path.abspath('')).parent.absolute())
 sys.path.insert(0, pkg_path)
 
 data_path=pkg_path+'/results/'
+
 checkpoint_path='/home/ee577/project/Checkpoints' 
 
 from src import *
@@ -49,8 +52,9 @@ from src import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Currently running on this device {device}")
+logging.info(f"Running on device: {device}")
 
-direct_pairs='/home/ee577/project/results/DTI_AD_NC_paired_data.pkl'
+direct_pairs='/home/ee577/project/results/DSC_ED_feat_data.pkl'
 
 with open(direct_pairs, 'rb') as f:
     X, y = pickle.load(f)
@@ -101,6 +105,10 @@ y_train = scaler.fit_transform(y_train)
 y_val = scaler.transform(y_val)
 y_test = scaler.transform(y_test)
 
+print(f"Training set: X_train={X_train.shape}, y_train={y_train.shape}, segmentation_masks_train={segmentation_masks_train.shape}")
+print(f"Validation set: X_val={X_val.shape}, y_val={y_val.shape}, segmentation_masks_val={segmentation_masks_val.shape}")
+print(f"Test set: X_test={X_test.shape}, y_test={y_test.shape}, segmentation_masks_test={segmentation_masks_test.shape}")
+
 
 def random_flip_rotate(image, mask, epoch):
     """
@@ -127,22 +135,16 @@ def random_flip_rotate(image, mask, epoch):
         image = image.unsqueeze(0)
         mask = mask.unsqueeze(0)
     
-    # (batch_size, channels, height, width)
     if image.dim() == 4:
-        # Flip horizontally (along the width axis)
+        # Flip horizontally with a 50% chance
         if random.random() < 0.5:
-            image = image.flip(3).to(device) 
+            image = image.flip(3).to(device)  # Flip along the width axis
             mask = mask.flip(3).to(device)
         
-        # Rotate image (no change in vertical direction)
-        angle = random.choice([0,180])  
-        rotate_transform = T.Compose([
-            T.RandomRotation(degrees=(0, 0), expand=False, center=None)  # Keeps vertical intact
-        ])
-        
-        # Apply rotation for both image and mask
-        image = torch.rot90(image, k=random.choice([0, 1, 2, 3]), dims=(2, 3)).to(device)  # Rotate in the horizontal axis
-        mask = torch.rot90(mask, k=random.choice([0, 1, 2, 3]), dims=(2, 3)).to(device)   # Rotate in the horizontal axis
+        # Rotate image and mask by 180 degrees with a 50% chance
+        if random.random() < 0.5:
+            image = torch.rot90(image, k=2, dims=(2, 3)).to(device)  # Rotate by 180 degrees
+            mask = torch.rot90(mask, k=2, dims=(2, 3)).to(device)  # Rotate by 180 degrees
         
     else:
         raise ValueError(f"Expected image to have 3 or 4 dimensions, but got {image.dim()} dimensions.")
@@ -152,7 +154,7 @@ def random_flip_rotate(image, mask, epoch):
         image = image.squeeze(0)
         mask = mask.squeeze(0)
     
-    return image, mask 
+    return image, mask
 
 class CustomDataset(Dataset):
     def __init__(self, images, labels, masks=None, transform=None):
@@ -306,7 +308,7 @@ class UNet3DRegression(nn.Module):
             l1_norm += torch.sum(torch.abs(param))
         return self.l1_lambda * l1_norm  # L1 penalty term scaled by lambda
 
-def save_checkpoint(model, optimizer, epoch, loss, batch=-1, val_loss=None, path='/home/ee577/project/results/checkpoint.pth', csv_path='/home/ee577/project/results/checkpoints.csv'):
+def save_checkpoint(model, optimizer, epoch, loss, batch=-1, val_loss=None, path='/home/ee577/project/Checkpoint/checkpoint.pth', csv_path='/home/ee577/project/results/checkpoints.csv'):
     # Save checkpoint to the .pth file
     checkpoint = {
         'epoch': epoch,
@@ -343,7 +345,7 @@ def train_model(
         num_epochs=1000, 
         patience=10, 
         eval_every=2,  
-        seeds=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        seeds=0,
         max_grad_norm = 5.0,
         last_epoch=None
         ):
@@ -353,14 +355,13 @@ def train_model(
     best_val_loss = float('inf')  # Initialize with a large number
     batches_since_improvement = 0  # Count how many epochs since last improvement
     val_losses = []  # List to store the validation losses
-    path = f'/home/ee577/project/results/DTI_feat_checkpoint.pth'
+    path = f'/home/ee577/project/results/DSC_feat_checkpoint.pth'
     if last_epoch:
         epoch_range=range(last_epoch, num_epochs)
     else:
         epoch_range=range(num_epochs)
 
     for epoch in epoch_range:
-        seed = seeds[epoch % len(seeds)]  # Cycle through the seeds if num_epochs > len(seeds)
         random.seed(epoch)
         np.random.seed(epoch)
         torch.manual_seed(epoch)
@@ -416,14 +417,15 @@ def train_model(
 
             train_loss = train_loss.item()
             val_loss = evaluate_validation_loss(model, val_loader) # model in eval mode
-            print(f"Epoch {epoch + 1}/{num_epochs}, Seed {seed}, Loss: {train_loss:.4f}, Val_loss {val_loss}, Batch: {batch_idx}")
+            logging.info(f"Epoch {epoch + 1}/{num_epochs}, Loss: {train_loss:.4f}, Val_loss {val_loss}, Batch: {batch_idx}")
+            print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {train_loss:.4f}, Val_loss {val_loss}, Batch: {batch_idx}")
             
             model.train() # re-enabled gradients
             # Perform validation every `eval_every` epochs
             if (batch_idx + 1) % eval_every == 0:
                 scheduler.step(val_loss)
                 val_losses.append(val_loss)  # Save the validation loss
-                save_checkpoint(model, optimizer, epoch='latest', loss=train_loss,val_loss =val_loss, batch=batch_idx, path=path)
+                save_checkpoint(model, optimizer, epoch=epoch, loss=train_loss,val_loss =val_loss, batch=batch_idx, path=path)
                 # Early stopping: Check if validation loss has improved
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
@@ -482,13 +484,13 @@ for batch in train_loader:
 
 
 # used to weight the loss values
-shapley_df = pd.read_csv(data_path + 'shap_DTI_AD_NC_.csv')
+shapley_df = pd.read_csv(data_path + 'shap_DSC_ap_rCBV_ED.csv')
 shapley_df = shapley_df[shapley_df['Summed_Shapy_Values'] >= 200]
-new_values = [200, 200, 200, 400, 400]
+new_values = [ 400, 400] #200, 200,
 new_values_df = pd.DataFrame(new_values, columns=['Summed_Shapy_Values'])
 shapley_df = pd.concat([shapley_df, new_values_df], ignore_index=True)
 shapley_df=shapley_df['Summed_Shapy_Values'].values
-shapley_values = np.array(shapley_df).reshape(-1, 1) 
+shapley_values = np.array(shapley_df).reshape(-1,1) 
 scaler = MinMaxScaler()
 shapley_values_scaled = scaler.fit_transform(shapley_values)
 shapley_values_scaled_tensor = torch.tensor(shapley_values_scaled, dtype=torch.float32)
@@ -506,5 +508,5 @@ optimizer = Adam([
 scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=2, factor=0.1, verbose=True)
 
 # DTI_feat_model = load_model(model, data_path+f"DTI_feat_{0}.pth")
-seeds = [21, 22, 23, 24, 25, 26, 27, 28, 29, 20]  # The list of seeds to iterate over
+
 train_model(model, train_loader, val_loader, optimizer,scheduler, num_epochs=1000, patience=10, eval_every=10).to(device)
