@@ -15,6 +15,10 @@ To activate the environment, run:
 conda activate ee577
 ```
 
+## Branches
+
+Note that the [[main]](https://github.com/yyexela/EE577_Project) branch contains code for the structural part of the project (training deep learning models in a pure data-driven approach), and the [[heather]](https://github.com/yyexela/EE577_Project/tree/heather) branch contains code for the functional part of the project (studying features and training ML models on them).
+
 ## Dataset
 
 The `UPENN_GBM` dataset can be found [here](https://brain.labsolver.org/upenn_gbm.html).
@@ -63,9 +67,6 @@ EE577_Project
 `Images`:
 - Contains media (such as results from training).
 
-`results`:
-- TODO: Heather
-
 `notebooks`:
 - Contains helpful notebooks.
   - `cnn_autoencoder_CIFAR10.ipynb`:
@@ -73,11 +74,7 @@ EE577_Project
   - `cnn_autoencoder_UPENN.ipynb`: 
     - This notebook contains code to train a CNN Autoencoder on UPENN_GBM.
   - `UPENN_GBM_parsing.ipynb`: 
-    - Helpful notebook parsing the UPENN_GBM dataset to get an idea of what's in it. (TODO: Heather, anything else interesting about this notebook?)
-  - `Radiometric_results_analysis.ipynb`: 
-    - TODO: Heather
-  - `Radiomic_feature_analysis_v2.py`: 
-    - TODO: Heather
+    - Helpful notebook parsing the UPENN_GBM dataset to get an idea of what's in it. 
 
 `scripts`:
 - Contains helpful scripts.
@@ -92,8 +89,6 @@ EE577_Project
     - Trains an MLP head on the embeddings of the UPENN_GBM dataset. The embeddings are obtained from a pre-trained DINOv2 model from HuggingFace.
   - `transformer_scratch.py`: 
     - Trains a Vision Transformer encoder with an MLP head on the UPENN_GBM.
-  - `Radiomic_feature_analysis_v2.py`: 
-    - TODO: Heather
 
 `src`:
 - Contains the source code for the notebooks and scripts. In particular, model definitions and training loops are here, as well as any useful helper functions.
