@@ -3,10 +3,9 @@ import sys
 import torch
 import numpy as np
 import torch.nn as nn
-import logging
-logging.basicConfig(level=logging.INFO)
 from pathlib import Path
 import torchvision.datasets as Datasets
+import torchvision.transforms as T
 import pandas as pd
 import pickle
 import tensorflow as tf
@@ -18,45 +17,54 @@ from monai.networks.nets import UNet
 from monai.networks.layers import Norm
 from monai import transforms
 from torch.utils.data import Dataset
-from torch.nn.utils import clip_grad_norm_
+import torch.nn as nn
 from torch.optim import Adam
+import matplotlib.pyplot as plt
 import random
+import numpy as np
 from skimage.transform import rotate
+from skimage.util import random_noise
 import torch.nn.functional as F
+import torch.nn as nn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchmetrics import MeanSquaredError, R2Score 
 from skimage import measure 
 from torch.utils.data import DataLoader
-
-import logging
+from torch.nn.utils import clip_grad_norm_
+from skimage import measure
 import csv
-
+import logging
 logging.basicConfig(level=logging.INFO)
-# export PYTHONPATH=/home/ee577/project/src:$PYTHONPATH
 
-src_path = os.path.abspath('src') 
-# print("Absolute path to 'src':", src_path)
-sys.path.append(src_path)
 
 pkg_path = str(Path(os.path.abspath('')).parent.absolute())
 sys.path.insert(0, pkg_path)
 
 data_path=pkg_path+'/results/'
-# print("Path to results with csvs ", data_path)
-# from src import *
+
+checkpoint_path='/home/ee577/project/Checkpoints' 
+
+from src import *
 
 # Load config file
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-checkpoint_path='/home/ee577/project/Checkpoints'
 # config = global_config.config
 # device = torch.device(config.device) 
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Currently running on this device {device}")
 logging.info(f"Running on device: {device}")
-direct_pairs='/home/ee577/project/results/DSC_ET_survival_data.pkl'
-# feature_model_path='/home/ee577/project/results/DTI_feat_best_model.pth'
-feature_model_path='/home/ee577/project/results/DSC_feat_checkpoint.pth'
+
+direct_pairs='/home/ee577/project/training_data/DSC_ED_merged_data.pkl'
 
 with open(direct_pairs, 'rb') as f:
-    X, y = pickle.load(f)
+    X, y, _ = pickle.load(f) # image, features, survival
+
+nan_count_per_column = np.sum(np.isnan(y), axis=0)  
+columns_to_keep = nan_count_per_column <= (0.3 * y.shape[0])  
+y = y[:, columns_to_keep] 
+y = np.nan_to_num(y, nan=0)
+print(y.shape)
+
 
 def create_segmentation_mask(image, threshold=0.1):
     """
@@ -91,17 +99,21 @@ segmentation_masks = np.stack(segmentation_masks)
 
 # Ensure X and segmentation_masks are combined and split together
 X_train, X_temp, segmentation_masks_train, segmentation_masks_temp, y_train, y_temp = train_test_split(
-    X, segmentation_masks, y, test_size=0.2, random_state=1)
+    X, segmentation_masks, y, test_size=0.2, random_state=42)
 
 # Split the temporary set into validation and test (70% validation, 30% test)
 X_val, X_test, segmentation_masks_val, segmentation_masks_test, y_val, y_test = train_test_split(
-    X_temp, segmentation_masks_temp, y_temp, test_size=0.7, random_state=1)
+    X_temp, segmentation_masks_temp, y_temp, test_size=0.7, random_state=42)
 
 # Normalize target variables y_train, y_val, y_test
 scaler = StandardScaler()
 y_train = scaler.fit_transform(y_train)
 y_val = scaler.transform(y_val)
 y_test = scaler.transform(y_test)
+
+print(f"Training set: X_train={X_train.shape}, y_train={y_train.shape}, segmentation_masks_train={segmentation_masks_train.shape}")
+print(f"Validation set: X_val={X_val.shape}, y_val={y_val.shape}, segmentation_masks_val={segmentation_masks_val.shape}")
+print(f"Test set: X_test={X_test.shape}, y_test={y_test.shape}, segmentation_masks_test={segmentation_masks_test.shape}")
 
 
 def random_flip_rotate(image, mask, epoch):
@@ -201,66 +213,18 @@ class CustomDataset(Dataset):
         else:
             return {'image': image, 'label': label}
 
-import torch.nn.init as init
 
-class AttentionLayer(nn.Module):
-    def __init__(self, input_size, init_weights=None):
-        super(AttentionLayer, self).__init__()
 
-        # Attention parameters: key, query, value projections
-        self.query = nn.Linear(input_size, input_size)
-        self.key = nn.Linear(input_size, input_size)
-        self.value = nn.Linear(input_size, input_size)
+class UNet3DRegression(nn.Module):
+    def __init__(self, in_channels, out_channels, weights, segmentation_weight=0.8, l1_lambda=1e-11, device=device):
+        super(UNet3DRegression, self).__init__()
 
-        # Initialize weights with init_weights if provided
-        if init_weights is not None:
-            self._initialize_weights(init_weights)
-
-    def _initialize_weights(self, init_weights):
-        """
-        Initialize the weights of query, key, and value layers with provided init_weights.
-        init_weights is expected to be a tensor of shape (input_size, input_size).
-        """
-        if init_weights.shape != (self.query.weight.shape[0], self.query.weight.shape[1]):
-            raise ValueError(f"init_weights must have the shape {self.query.weight.shape}")
-
-        # Assign the custom initialized weights to query, key, and value layers
-        self.query.weight.data = init_weights
-        self.key.weight.data = init_weights
-        self.value.weight.data = init_weights
-
-        # Optionally initialize biases if needed (e.g., zero initialization)
-        init.zeros_(self.query.bias)
-        init.zeros_(self.key.bias)
-        init.zeros_(self.value.bias)
-
-    def forward(self, x):
-        # Compute queries, keys, and values
-        q = self.query(x)  # (batch_size, feature_size)
-        k = self.key(x)    # (batch_size, feature_size)
-        v = self.value(x)  # (batch_size, feature_size)
-
-        # Compute the attention weights
-        attn_weights = torch.bmm(q.unsqueeze(1), k.unsqueeze(2))  # Batch matrix multiplication
-        attn_weights = F.softmax(attn_weights, dim=-1)  # Normalize along the last dimension
-        
-        # Apply attention weights to values
-        attended = torch.bmm(attn_weights, v.unsqueeze(1))  # (batch_size, 1, feature_size)
-        attended = attended.squeeze(1)  # Remove the extra dimension: (batch_size, feature_size)
-
-        return attended
-
-class UNet3DRegression_survival(nn.Module):
-    def __init__(self, in_channels, out_channels, feature_importances=None, l1_lambda=1e-11, device='cuda'):
-        super(UNet3DRegression_survival, self).__init__()
-
-        self.device = device  # Store device info
-        
-        # Initialize UNet with 3D structure for segmentation task
+        self.device = device  # Set the device for the model
+        # Initialize UNet with 3D structure
         self.unet = UNet(
             spatial_dims=3,
             in_channels=in_channels,
-            out_channels=out_channels,  # out_channels for segmentation (e.g., 1 for binary segmentation)
+            out_channels=out_channels,
             channels=(16, 32, 64, 128),
             strides=(2, 2, 2),
             kernel_size=3,
@@ -269,25 +233,23 @@ class UNet3DRegression_survival(nn.Module):
             act='PReLU',
             norm='INSTANCE',
             dropout=0.1,
-        ).to(self.device)  # Move the UNet model to the specified device
+        ).to(device)  # Move UNet to the device
+
+        # Initialize regression layer as None initially
+        self.regression_layer = nn.Identity().to(device)
+        
+        # Normalize and move weights to the correct device
+        sum_weights = sum(weights)
+        self.weights = (weights / sum_weights).to(device)
 
         # Initialize dropout and move it to device
-        self.dropout_UNET = nn.Dropout3d(p=0.3).to(self.device)
-        self.dropout = nn.Dropout2d(p=0.3).to(self.device)
-        self.segmentation_head = nn.Conv3d(out_channels, 1, kernel_size=1).to(self.device)  # Move segmentation head to device
-        if feature_importances is not None:
-            self.feature_importances=feature_importances
-        self.l1_lambda = l1_lambda
-        # Fully connected layers for regression (survival prediction)
-        self.fc1 = nn.Identity().to(self.device)
-        # Initializing the regression layer as None
-        self.regression_layer = nn.Identity().to(self.device)
+        self.dropout = nn.Dropout3d(p=0.3).to(device)
 
-         # Fully connected layers for regression (survival prediction)
-        self.fc1=nn.Identity().to(self.device)
-        self.fc2 = nn.Linear(128, 64).to(self.device)   # Intermediate layer for regression
-        self.fc3 = nn.Linear(64, 1).to(self.device)    # Intermediate layer for regression
-        self.fc4 = nn.Linear(32, 1).to(self.device)     # Final output regression layer (single output)
+        # Initialize segmentation weight and move it to device
+        self.segmentation_weight = torch.tensor(segmentation_weight).to(device)  # Ensure segmentation weight is a tensor
+        self.segmentation_head = nn.Conv3d(out_channels, 1, kernel_size=1).to(device)  # Move segmentation head to device
+
+        self.l1_lambda = l1_lambda  # L1 regularization lambda
 
     def forward(self, x):
         if x.ndimension() == 4:  # Shape: (channels, depth, height, width)
@@ -301,112 +263,84 @@ class UNet3DRegression_survival(nn.Module):
             x = F.interpolate(x, size=(new_depth, new_height, new_width), mode='trilinear', align_corners=True)
 
         x = self.unet(x)  # Forward pass through UNet
-        x = self.dropout_UNET(x)  # Apply dropout
+        x = self.dropout(x)  # Apply dropout
         segmentation_output = self.segmentation_head(x)  # Get segmentation output
         segmentation_output = segmentation_output.to(self.device)  # Ensure output is on the correct device
+
+        # Apply global average pooling to reduce the spatial dimensions
         x = F.adaptive_avg_pool3d(x, (1, 1, 1))  # Global average pooling
-        x = x.view(x.size(0), -1)  
+        x = x.view(x.size(0), -1)  # Flatten to [batch_size, channels]
 
         # Initialize regression_layer with the correct output size dynamically during the forward pass
         if isinstance(self.regression_layer, nn.Identity):
-            self.regression_layer = nn.Linear(x.size(1), 55).to(self.device) 
-        x = self.regression_layer(x)  # Apply regression layer
-        # self.attn = AttentionLayer(input_size=x.size(1)).to(self.device)
-        # attended_features = self.attn(x)  # Attention applied to regression features
-        # Apply `fc1` only once to the attended features to reduce dimensions
-        # self.fc1 = nn.Linear(attended_features.size(1), 1).to(self.device)  # Use size(1) for input size
-        # x = F.relu(self.fc1(attended_features))  # Apply `fc1` once
-        self.fc1 = nn.Linear(x.size(1), 128).to(self.device)
-        x = F.relu(self.fc1(x)) 
-        self.dropout
-        x = F.relu(self.fc2(x))  # Second fully connected layer
-        self.dropout
-        x = F.relu(self.fc3(x))  # Third fully connected layer
-        # self.dropout
-        # x = self.fc4(x)  # Final regression output (single continuous value)
-        regression_output = x
+            self.regression_layer = nn.Linear(x.size(1), 55).to(self.device)  # Adjust output to 55 and move to device
+
+        regression_output = self.regression_layer(x)  # Apply regression layer (55 output features)
+        regression_output = regression_output.to(self.device)  # Ensure output is on the correct device
+
         return {'segmentation_output': segmentation_output, 'regression_output': regression_output}
 
-    def custom_loss(self, segmentation_output, regression_output, target_segmentation, target_regression):
+    def weighted_mse_loss(self, segmentation_output, regression_output, target_segmentation, target_regression):
         # Ensure all targets are on the same device as the model outputs
         target_segmentation = target_segmentation.to(self.device)
         target_regression = target_regression.to(self.device)
 
         # Resize the segmentation output to match the size of the target segmentation
-        target_size = target_segmentation.shape[2:]  # [74, 98, 86], example target size
+        target_size = target_segmentation.shape[2:]  # [74, 98, 86]
         segmentation_output = F.interpolate(segmentation_output, size=target_size, mode='trilinear', align_corners=False)
 
-        # Calculate the binary cross-entropy loss for segmentation (standard for segmentation tasks)
-        segmentation_loss = F.binary_cross_entropy_with_logits(segmentation_output, target_segmentation).to(self.device)
+        # Calculate the binary cross-entropy loss for segmentation
+        segmentation_loss = F.binary_cross_entropy_with_logits(segmentation_output, target_segmentation)
 
         # Ensure the regression output and target regression have the same shape
         assert regression_output.size(1) == target_regression.size(1), \
             f"Regression output size {regression_output.size(1)} does not match target size {target_regression.size(1)}"
         
         # Calculate the MSE loss for regression
-        regression_loss = F.huber_loss(regression_output.squeeze(), target_regression, delta=5)  # Squeeze if it's single-output regression
+        regression_loss = (regression_output - target_regression) ** 2
+        weighted_mse_loss = regression_loss * self.weights.T 
+        regression_loss = weighted_mse_loss.mean()
 
-        l1_loss = self.l1_regularization()
-
-        total_loss = segmentation_loss + regression_loss + l1_loss
+        # Combine both losses
+        total_loss = segmentation_loss + regression_loss
         return total_loss
-
 
     def l1_regularization(self):
         """
-        Computes L1 regularization (penalty) only on the fully connected layers.
+        Computes L1 regularization (penalty) on the model parameters.
         """
-        l1_norm = 0.0001
-        # Apply L1 regularization only to the fully connected layers (fc1, fc2, fc3, fc4)
-        for name, param in self.named_parameters():
-            if name in ['fc1.weight', 'fc2.weight', 'fc3.weight', 'fc4.weight']:  # Check if it's a fully connected layer
-                l1_norm += torch.sum(torch.abs(param))  # L1 regularization on weights
-        return self.l1_lambda * l1_norm 
+        l1_norm = 0.0
+        for param in self.parameters():
+            l1_norm += torch.sum(torch.abs(param))
+        return self.l1_lambda * l1_norm  # L1 penalty term scaled by lambda
 
-def save_checkpoint(model, optimizer, epoch, loss, batch=-1, val_loss=None, path='/home/ee577/project/results/checkpoint.pth', csv_path='/home/ee577/project/results/checkpoints.csv', attention_model=None):
-    try:
-        # Save checkpoint to the .pth file
-        checkpoint = {
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'train_loss': loss,
-            'val_loss': val_loss,
-            'batch': batch,
-        }
+def save_checkpoint(model, optimizer, epoch, loss, batch=-1, val_loss=None, path='/home/ee577/project/Checkpoint/checkpoint.pth', csv_path='/home/ee577/project/results/checkpoints.csv'):
+    # Save checkpoint to the .pth file
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'train_loss': loss,
+        'val_loss': val_loss,
+        'batch': batch,
+    }
+    
+    torch.save(checkpoint, path)
+    print(f"Checkpoint saved to {path}")
 
-        # If attention model is provided, save its state dict as well
-        if attention_model is not None:
-            checkpoint['attention_model_state_dict'] = attention_model.state_dict()
-
-        torch.save(checkpoint, path)
-        print(f"Checkpoint saved to {path}")
-        
-        # Handle CSV file writing
-        # Check if the CSV file exists
-        if not os.path.isfile(csv_path):
-            print(f"CSV file not found. Creating a new one: {csv_path}")
-            # If it doesn't exist, create the file and write the header
-            with open(csv_path, mode='w', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow(['epoch', 'batch', 'train_loss', 'val_loss'])  # Add header row
-
-        # Append new data to the CSV file
-        with open(csv_path, mode='a', newline='') as file:
+    # Check if the CSV file exists
+    if not os.path.isfile(csv_path):
+        # If it doesn't exist, create the file and write the header
+        with open(csv_path, mode='w', newline='') as file:
             writer = csv.writer(file)
-            # If val_loss is None, write a placeholder "N/A" or some default value
-            if val_loss is None:
-                val_loss = 'N/A'  # Set val_loss to 'N/A' if None
-            writer.writerow([epoch, batch, loss, val_loss])  # Append data
+            writer.writerow(['epoch', 'batch', 'train_loss', 'val_loss'])  # Add header row
+        print(f"CSV file created at {csv_path}")
 
-        print(f"Checkpoint data saved to CSV at {csv_path}")
-
-    except Exception as e:
-        print(f"Error occurred while saving checkpoint: {str(e)}")
-
-def add_noise_to_labels(labels, noise_factor=0.15):
-    noise = torch.randn_like(labels) * noise_factor  # Gaussian noise
-    return labels + noise
+    # Append new data to the CSV file
+    with open(csv_path, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow([epoch, batch, loss, val_loss])  # Append data
+    print(f"Checkpoint data saved to CSV at {csv_path}")
 
 def train_model(
         model, 
@@ -414,9 +348,10 @@ def train_model(
         val_loader, 
         optimizer, 
         scheduler, 
-        num_epochs=10000, 
+        num_epochs=1000, 
         patience=10, 
         eval_every=2,  
+        seeds=0,
         max_grad_norm = 5.0,
         last_epoch=None
         ):
@@ -426,7 +361,7 @@ def train_model(
     best_val_loss = float('inf')  # Initialize with a large number
     batches_since_improvement = 0  # Count how many epochs since last improvement
     val_losses = []  # List to store the validation losses
-    path = f'/home/ee577/project/results/DTI_surv_checkpoint.pth'
+    path = f'/home/ee577/project/results/DSC_feat_checkpoint.pth'
     if last_epoch:
         epoch_range=range(last_epoch, num_epochs)
     else:
@@ -467,8 +402,6 @@ def train_model(
             transformed_inputs = torch.stack(transformed_inputs).to(device)
             transformed_masks = torch.stack(transformed_masks).to(device)
 
-            if model.training:  # Add noise only during training
-                noisy_labels = add_noise_to_labels(labels)  
             optimizer.zero_grad()
 
             # Forward pass
@@ -476,9 +409,9 @@ def train_model(
             # Calculate segmentation loss using the segmentation masks
             segmentation_output = outputs['segmentation_output']
             regression_output = outputs['regression_output']
-  
+
             # Use weighted MSE loss
-            train_loss = model.custom_loss(segmentation_output,regression_output, transformed_masks, labels)  
+            train_loss = model.weighted_mse_loss(segmentation_output,regression_output, transformed_masks,labels)  
             l1_loss = model.l1_regularization()
 
             total_loss = train_loss + l1_loss
@@ -490,8 +423,8 @@ def train_model(
 
             train_loss = train_loss.item()
             val_loss = evaluate_validation_loss(model, val_loader) # model in eval mode
-            logging.info(f"Epoch {epoch + 1}/{num_epochs},  Loss: {train_loss:.4f}, Val_loss {val_loss}, Batch: {batch_idx}")
-            print(f"Epoch {epoch + 1}/{num_epochs},Loss: {train_loss:.4f}, Val_loss {val_loss}, Batch: {batch_idx}")
+            logging.info(f"Epoch {epoch + 1}/{num_epochs}, Loss: {train_loss:.4f}, Val_loss {val_loss}, Batch: {batch_idx}")
+            print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {train_loss:.4f}, Val_loss {val_loss}, Batch: {batch_idx}")
             
             model.train() # re-enabled gradients
             # Perform validation every `eval_every` epochs
@@ -535,66 +468,51 @@ def evaluate_validation_loss(model, val_loader):
             regression_output = outputs['regression_output']
 
             # Calculate loss
-            loss = model.custom_loss(segmentation_output,regression_output, segmentation_masks,labels)
+            loss = model.weighted_mse_loss(segmentation_output,regression_output, segmentation_masks,labels)
             val_loss += loss.item() * inputs.size(0)
             total_samples += inputs.size(0)
 
     avg_val_loss = val_loss / total_samples
     return avg_val_loss
 
+batch_size=16
 
-batch_siz=16
-train_loader = DataLoader(CustomDataset(X_train, y_train, masks=segmentation_masks_train), batch_size=batch_siz, shuffle=False)
-val_loader = DataLoader(CustomDataset(X_val, y_val, masks=segmentation_masks_val), batch_size=batch_siz, shuffle=False)
-test_loader = DataLoader(CustomDataset(X_test, y_test, masks=segmentation_masks_test), batch_size=batch_siz, shuffle=False)
+train_loader = DataLoader(CustomDataset(X_train, y_train, masks=segmentation_masks_train), batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(CustomDataset(X_val, y_val, masks=segmentation_masks_val), batch_size=batch_size, shuffle=False)
+test_loader = DataLoader(CustomDataset(X_test, y_test, masks=segmentation_masks_test), batch_size=batch_size, shuffle=False)
 
 # Example of how you can iterate through the dataset
 for batch in train_loader:
     images = batch['image']
     labels = batch['label']
     masks = batch['mask']
+    
+
 
 # used to weight the loss values
-shapley_df = pd.read_csv(data_path + 'shap_DTI_AD_NC_.csv')
+shapley_df = pd.read_csv(data_path + 'shap_DSC_ap_rCBV_ED.csv')
 shapley_df = shapley_df[shapley_df['Summed_Shapy_Values'] >= 200]
-new_values = [200, 200, 200, 400, 400]
+new_values = [400, 400] #200, 200,
 new_values_df = pd.DataFrame(new_values, columns=['Summed_Shapy_Values'])
 shapley_df = pd.concat([shapley_df, new_values_df], ignore_index=True)
 shapley_df=shapley_df['Summed_Shapy_Values'].values
-sum_w=sum(shapley_df)
-shapley_df=shapley_df/sum_w
-shapley_values = np.array(shapley_df).reshape(-1, 1) 
+shapley_values = np.array(shapley_df).reshape(-1,1) 
 scaler = MinMaxScaler()
 shapley_values_scaled = scaler.fit_transform(shapley_values)
 shapley_values_scaled_tensor = torch.tensor(shapley_values_scaled, dtype=torch.float32)
-# init_weights = shapley_values_scaled_tensor.repeat(1, 55)  # Repeat along the second dimension
 
-n_shape = batch['image'].shape 
+in_shape = batch['image'].shape 
 out_shape=y_train.shape[1:][0]
 
-def load_model(model, checkpoint_path):
-    state_dict = torch.load(checkpoint_path)
-    model.load_state_dict(state_dict, strict=False)
-    model.eval()
-    return model
-
-model = UNet3DRegression_survival(in_channels=1, out_channels=out_shape, device=device) # feature_importances=init_weights
-DTI_feat_model = load_model(model, feature_model_path).to(device)
+model = UNet3DRegression(in_channels=1, out_channels=out_shape, weights=shapley_values_scaled_tensor)
 
 optimizer = Adam([
-    # Apply weight decay (L2 regularization) to the U-net layers
-    {'params': model.unet.parameters(), 'weight_decay': 1e-10},  # Less regularization on U-net layers
-
-    # Apply weight decay to the rest of the model's parameters
-    {'params': model.regression_layer.parameters(), 'weight_decay': 1e-9},  # Regularization for regression layers
-
-    # For fc1, fc2, fc3, fc4, apply no weight decay, as we will handle L1 manually
-    {'params': model.fc1.parameters(), 'weight_decay': 0.001},
-    {'params': model.fc2.parameters(), 'weight_decay': 0.001},
-    {'params': model.fc3.parameters(), 'weight_decay': 0.001},
-    # {'params': model.fc4.parameters(), 'weight_decay': 0.001},
-], lr=1e-9)
+    {'params': model.unet.parameters(), 'weight_decay': 1e-11},  # Less regularization on U-net layers
+    {'params': model.regression_layer.parameters(), 'weight_decay': 1e-9},  # L2 regularization for regression layer
+], lr=1e-7)
 # Learning Rate Scheduler (Reduce learning rate when validation loss plateaus)
-scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.1, verbose=True)
+scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=2, factor=0.1, verbose=True)
 
-train_model(DTI_feat_model, train_loader, val_loader, optimizer,scheduler, num_epochs=1000, patience=10, eval_every=10).to(device)
+# DTI_feat_model = load_model(model, data_path+f"DTI_feat_{0}.pth")
+
+train_model(model, train_loader, val_loader, optimizer,scheduler, num_epochs=1000, patience=10, eval_every=10).to(device)

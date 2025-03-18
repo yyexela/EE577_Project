@@ -59,6 +59,7 @@ class Config(Namespace):
         self.checkpoint_dir = os.path.join(self.top_dir, "Checkpoints")
         self.pickle_dir = os.path.join(self.top_dir, "Pickles")
         self.image_dir = os.path.join(self.top_dir, "Images")
+        self.training_data_dir=os.path.join(self.top_dir, "training_data")
 
         self.cifar10_dir = os.path.join(self.dataset_dir, "CIFAR10")
         self.upenn_dir = os.path.join(self.dataset_dir, "UPENN_GBM")
