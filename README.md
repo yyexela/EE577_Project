@@ -1,33 +1,65 @@
 Environment:
 - `conda activate ee577`
 
-Notes:
-- Stratified sampling of data
-- 3D volumetric images
-- Not all patients have lifespan data
-- Lifespan is categorized in ranges
+Important Files:
 
-```text
-Tumor box data:
-            X min       X max       Y min       Y max       Z min       Z max
-count  585.000000  585.000000  585.000000  585.000000  585.000000  585.000000
-mean    49.071795  112.611966   95.182906  173.357265   93.003419  151.056410
-std     17.840378   19.807244   26.582562   23.983311   30.971651   29.188368
-min      0.000000   49.000000   31.000000   86.000000   44.000000   82.000000
-25%     35.000000   99.000000   80.000000  156.000000   63.000000  121.000000
-50%     48.000000  115.000000   92.000000  176.000000   92.000000  160.000000
-75%     61.000000  130.000000  115.000000  193.000000  121.000000  179.000000
-max    106.000000  144.000000  174.000000  214.000000  159.000000  209.000000
-```
+### Data generating files ###
+File: Radiomic_feature_analysis_v2.py
+In: csvs containing features obtained using CaPTk package with ET, ED, and NC segmentation masks
+Out: functional_results/model_results_summary_for_Linear_Model.csv
+Purpose: Establish which modalities may be most predictive of survival
 
-Considerations:
-- Use masked or unmasked data
-- How many "slices" to use
-- Use 3D volumetric data or 2D slice (centered)
-- Data preprocessing (subtract mean/stdev)
-- Data augmentation
-- Not enough data in a single modality for a CNN
+File: notebooks/Shap_values.ipynb
+In: Top models from Radiomic_feature_analysis_v2.py
+Out: functional_results
+/shap_DSC_ap_rCBV_ED.csv
+/shap_DTI_AD_NC_.csv
+/selected_features_DSC.csv
+/selected_features_DTI.csv
+Purpose: Feature selection for training first U-net
 
+File: notebooks/data_prep_for_segModels.ipynb
+In: 3D tumor data, feature csvs, survival/clinical data
+Out: pickel files containing masked, scaled and cropped tumors (X) paired with either another modality (X1, X2) or with features (usually y except during test train split) and scaled/normalized Z (survival data), also tumor box data
+Purpose: Prepare and pair up different data sources for U-net and U-net derived models
+
+File: scripts/Transfer_learning_feat_trainer.py
+In: Prepared 3D tumor segmentations paired with feature data, shapley values for the weighted MSE cost function
+Out: best_models_unet
+/DSC_feat_best_model.pth
+/DTI_feat_best_model.pth
+/functional_results
+/DSC_feat_loss.csv
+functional_results
+/DTI_feat_loss.csv
+Purpose: Train 3D U-net models to predict features based on segmentation mask and shapley values
+
+File: scripts/Transfer_learning_surv_trainer.py
+In: Prepared 3D tumor segmentations paired with normalized survival data
+Out: best_models_unet
+/DSC_surv_best_model.pth
+/DTI_surv_best_model.pth
+/functional_results
+/DSC_surv_loss.csv
+functional_results
+/DTI_surv_loss.csv
+Purpose: Train 3D U-net models to predict survival data
+
+File: notebooks /Salience_maps.ipynb
+In: best models, paired data, 
+Out: Saliency maps, rescaled survival predictions, other model metrics
+Purpose: To provide data for U-Net model analysis
+
+### Data analysis files ###
+File: notebooks/feature_analysis.ipynb
+In: results stored in functional_results
+Out: Graphs of the simple 3 layered FNN's r-squared values, Top 10 Summed Absolute Shapley Values for each modality, scaled and unscaled survival histograms, first attempt at saliency maps (note tumor locations are not yet paired up here)
+Purpose: To analyze the simplier models and data that the U-nets will be trained on
+
+File: notebooks/UNet_results_analysis.ipynb
+In: results stored in functional_results
+Out: Graphs of the training and validation loss
+Purpose: To analyze the results of U-net training
 Code pulled from:
 - [CNN AutoEncoder Source](https://www.digitalocean.com/community/tutorials/convolutional-autoencoder)
 - [UPENN-GBM parsing Source](https://github.com/LabAIRT/SpotTune_MGMT_prediction)
